@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tauri App</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app-shell">
+      <!-- Top Navigation -->
+      <nav id="top-nav">
+        <div class="breadcrumbs">
+          <span class="breadcrumb-item">Servers</span>
+          <span class="breadcrumb-item">/</span>
+          <span class="breadcrumb-item" id="active-server-name">&lt;No Server&gt;</span>
+        </div>
+      </nav>
+
+      <!-- Sidebar -->
+      <aside id="sidebar">
+        <div class="sidebar-header">Object Explorer</div>
+        <div id="object-explorer">
+          <!-- Nested tree will be populated here -->
+          <div class="tree-node" id="root-node">
+            <span class="tree-node-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </span>
+            <span id="server-count-label">Servers (0)</span>
+          </div>
+          <div class="tree-children" id="server-list">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main id="main-content">
+        <div class="tab-header">
+          <div id="tab-bar">
+            <!-- Tabs dynamically populated -->
+          </div>
+          <button id="btn-add-tab" class="add-tab-btn" title="New Query Tool (Cmd+T)">+</button>
+        </div>
+
+        <div id="view-container">
+          <!-- View panes dynamically populated -->
+        </div>
+      </main>
+
+      <!-- Templates -->
+      <template id="dashboard-template">
+        <div class="dashboard-grid">
+          <div style="grid-column: 1 / -1; display: flex; justify-content: flex-end; padding-bottom: 10px;">
+            <button id="btn-refresh-dashboard" class="tool-btn" style="background: var(--bg-header); border: 1px solid var(--border-color);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh
+            </button>
+          </div>
+          <div class="card">
+            <div class="card-title">SERVER SESSIONS</div>
+            <div id="active-sessions-count" style="font-size: 24px; font-weight: bold; color: var(--accent-blue);">0</div>
+            <div id="sessions-breakdown" style="margin-top: 8px; color: var(--text-muted);">0 Idle, 0 Running</div>
+          </div>
+          <div class="card">
+            <div class="card-title">TRANSACTION THROUGHPUT</div>
+            <div id="tps-count" style="font-size: 18px; color: var(--success);">0 tps</div>
+          </div>
+        </div>
+      </template>
+
+      <template id="query-tool-template">
+        <div class="query-tool">
+          <div class="query-toolbar">
+            <button class="tool-btn execute btn-execute">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              Execute
+            </button>
+            <div style="width: 1px; height: 20px; background: var(--border-color);"></div>
+            <button class="tool-btn btn-save">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v13a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save
+            </button>
+          </div>
+          <div class="editor-container">
+            <textarea class="sql-editor" spellcheck="false" readonly placeholder="Connect to a server to start writing SQL..."></textarea>
+          </div>
+          <div class="results-container">
+            <table class="data-table">
+              <thead>
+                <tr class="results-head"></tr>
+              </thead>
+              <tbody class="results-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+      </main>
+
+      <!-- Status Bar -->
+      <footer id="status-bar">
+        <span id="status-text">Ready.</span>
+      </footer>
+    </div>
+
+    <!-- Connection Modal -->
+    <div id="connection-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 style="font-size: 14px; margin: 0;">Connect to Server</h2>
+          <button type="button" class="close-icon" id="close-modal-icon" style="background: none; border: none; color: var(--text-muted); cursor: pointer;">&times;</button>
+        </div>
+        
+        <form id="connection-form">
+          <div class="modal-body">
+            <div id="connection-error" style="color: var(--error); background: rgba(250, 82, 82, 0.1); padding: 8px; border-radius: 4px; margin-bottom: 16px; display: none; font-size: 12px; border: 1px solid var(--error);"></div>
+            <div class="form-group">
+              <label>Host name/address</label>
+              <input id="db-host" type="text" value="localhost" />
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div class="form-group">
+                <label>Port</label>
+                <input id="db-port" type="number" value="5432" />
+              </div>
+              <div class="form-group">
+                <label>Username</label>
+                <input id="db-user" type="text" value="postgres" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <input id="db-pass" type="password" placeholder="Password" />
+            </div>
+          </div>
+          
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="close-modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Connect</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts" defer></script>
+  </body>
+</html>
