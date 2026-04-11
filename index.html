@@ -143,6 +143,18 @@
         </form>
       </div>
     </div>
+    
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="confirm-modal-overlay">
+      <div class="modal-content confirm-modal-content">
+        <div class="modal-header confirm-modal-header" id="confirm-title">Confirmation Required</div>
+        <div class="modal-body confirm-modal-body" id="confirm-message">Are you sure you want to proceed?</div>
+        <div class="modal-footer confirm-modal-footer">
+          <button type="button" class="btn-confirm-secondary" id="confirm-cancel">Cancel</button>
+          <button type="button" class="btn-danger" id="confirm-ok">Proceed</button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts" defer></script>
   </body>
