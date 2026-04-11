@@ -30,4 +30,5 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "postgres
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = "1.35"
+futures = "0.3.32"
 
