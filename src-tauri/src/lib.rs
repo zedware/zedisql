@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use futures::StreamExt;
 use sqlx::{Pool, Postgres, Row, Column};
 use tauri::{Emitter, State};
 use tauri::menu::{Menu, MenuItem, Submenu};
@@ -7,9 +8,10 @@ use std::sync::Mutex;
 #[derive(Default)]
 struct DbState {
     pool: Mutex<Option<Pool<Postgres>>>,
+    config: Mutex<Option<DbConfig>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct DbConfig {
     host: String,
     port: u16,
@@ -18,19 +20,29 @@ struct DbConfig {
 }
 
 #[derive(Serialize)]
+struct ColumnInfo {
+    name: String,
+    data_type: String,
+}
+
+#[derive(Serialize)]
 struct QueryResult {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
+    rows_affected: u64,
+    command_tag: String,
 }
 
 #[tauri::command]
 async fn connect_db(
     config: DbConfig,
+    database: Option<String>,
     state: State<'_, DbState>,
 ) -> Result<String, String> {
+    let db_name = database.unwrap_or_else(|| "postgres".to_string());
     let url = format!(
-        "postgres://{}:{}@{}:{}/postgres",
-        config.user, config.pass, config.host, config.port
+        "postgres://{}:{}@{}:{}/{}",
+        config.user, config.pass, config.host, config.port, db_name
     );
 
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -42,7 +54,23 @@ async fn connect_db(
     let mut pool_state = state.pool.lock().unwrap();
     *pool_state = Some(pool);
 
-    Ok("Connected successfully".into())
+    let mut config_state = state.config.lock().unwrap();
+    *config_state = Some(config);
+
+    Ok(format!("Connected to {} successfully", db_name))
+}
+
+#[tauri::command]
+async fn switch_database(
+    database: String,
+    state: State<'_, DbState>,
+) -> Result<String, String> {
+    let config = {
+        let config_guard = state.config.lock().unwrap();
+        config_guard.as_ref().ok_or("No connection config stored")?.clone()
+    };
+
+    connect_db(config, Some(database), state).await
 }
 
 #[tauri::command]
@@ -70,20 +98,31 @@ async fn execute_query(
         pool_guard.as_ref().ok_or("Not connected")?.clone()
     };
 
-    // 1. Initial attempt using standard binary execution
-    let rows_result = sqlx::query(&query).fetch_all(&pool).await;
+    let query_string = query.clone();
+    let mut stream = sqlx::raw_sql(&query_string).fetch_many(&pool);
+    let mut columns = Vec::new();
+    let mut result_rows = Vec::new();
+    let mut rows_affected = 0;
+    
+    // Simple command tag extraction
+    let command_tag = query.trim().split_whitespace().next()
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| "QUERY".to_string());
 
-    match rows_result {
-        Ok(rows) => {
-            if rows.is_empty() {
-                return Ok(QueryResult { columns: vec![], rows: vec![] });
+    while let Some(res) = stream.next().await {
+        match res.map_err(|e| {
+            // If binary fetch fails, try fallback
+            e.to_string()
+        })? {
+            sqlx::Either::Left(result) => {
+                rows_affected += result.rows_affected();
             }
-            let columns = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
-            let mut result_rows = Vec::new();
-            for row in rows {
+            sqlx::Either::Right(row) => {
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                }
                 let mut values = Vec::new();
                 for i in 0..row.columns().len() {
-                    // Try to decode common types into strings for display
                     let val: String = row.try_get::<String, _>(i)
                         .unwrap_or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<i32, _>(i).map(|v| v.to_string())
@@ -98,56 +137,71 @@ async fn execute_query(
                 }
                 result_rows.push(values);
             }
-            Ok(QueryResult { columns, rows: result_rows })
         }
-        Err(e) if e.to_string().contains("no binary output function available") => {
-            // 2. Fallback attempt with JSON aggregation for internal Postgres types like `aclitem`
-            let q_trimmed = query.trim().to_lowercase();
-            // Only wrap if it looks like a data-returning query
-            if q_trimmed.starts_with("select") || q_trimmed.starts_with("with") || q_trimmed.starts_with("show") {
-                let wrapped_query = format!("SELECT json_agg(t) FROM ({}) t", query);
-                let json_row = sqlx::query(&wrapped_query)
-                    .fetch_one(&pool)
-                    .await
-                    .map_err(|e| format!("JSON Fallback failed: {}", e))?;
-                
-                // Result of json_agg is an Option<serde_json::Value>
-                let json_val: Option<serde_json::Value> = json_row.try_get(0).map_err(|e| e.to_string())?;
-                
-                if let Some(serde_json::Value::Array(arr)) = json_val {
-                    if arr.is_empty() {
-                        return Ok(QueryResult { columns: vec![], rows: vec![] });
+    }
+
+    if columns.is_empty() && result_rows.is_empty() && rows_affected == 0 {
+        return execute_query_fallback(query, &pool).await;
+    }
+
+    Ok(QueryResult { 
+        columns, 
+        rows: result_rows, 
+        rows_affected, 
+        command_tag 
+    })
+}
+
+async fn execute_query_fallback(
+    query: String,
+    pool: &sqlx::PgPool,
+) -> Result<QueryResult, String> {
+    let q_trimmed = query.trim().to_lowercase();
+    let command_tag = q_trimmed.split_whitespace().next()
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| "QUERY".to_string());
+
+    if q_trimmed.starts_with("select") || q_trimmed.starts_with("with") || q_trimmed.starts_with("show") {
+        let wrapped_query = format!("SELECT json_agg(t) FROM ({}) t", query);
+        let json_row = sqlx::query(&wrapped_query)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("JSON Fallback failed: {}", e))?;
+        
+        let json_val: Option<serde_json::Value> = json_row.try_get(0).map_err(|e| e.to_string())?;
+        
+        if let Some(serde_json::Value::Array(ref arr)) = json_val {
+            if arr.is_empty() {
+                return Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: 0, command_tag });
+            }
+            
+            let mut columns = Vec::new();
+            if let Some(serde_json::Value::Object(obj)) = arr.first() {
+                columns = obj.keys().cloned().collect();
+            }
+
+            let mut result_rows = Vec::new();
+            for item in arr {
+                if let serde_json::Value::Object(obj) = item {
+                    let mut row = Vec::new();
+                    for col in &columns {
+                        let val = obj.get(col).cloned().unwrap_or(serde_json::Value::Null);
+                        row.push(match val {
+                            serde_json::Value::String(s) => s,
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Null => "null".to_string(),
+                            _ => val.to_string(),
+                        });
                     }
-                    
-                    // Extract column names from the first object
-                    let mut columns = Vec::new();
-                    if let Some(serde_json::Value::Object(obj)) = arr.first() {
-                        columns = obj.keys().cloned().collect();
-                    }
-                    
-                    let mut result_rows = Vec::new();
-                    for val in arr {
-                        if let serde_json::Value::Object(obj) = val {
-                            let mut row_data = Vec::new();
-                            for col in &columns {
-                                let v_str = match obj.get(col) {
-                                    Some(serde_json::Value::String(s)) => s.clone(),
-                                    Some(serde_json::Value::Null) => "null".to_string(),
-                                    Some(other) => other.to_string(),
-                                    None => "null".to_string(),
-                                };
-                                row_data.push(v_str);
-                            }
-                            result_rows.push(row_data);
-                        }
-                    }
-                    return Ok(QueryResult { columns, rows: result_rows });
+                    result_rows.push(row);
                 }
             }
-            Err(e.to_string())
+            return Ok(QueryResult { columns, rows: result_rows, rows_affected: arr.len() as u64, command_tag });
         }
-        Err(e) => Err(e.to_string()),
     }
+    
+    Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: 0, command_tag })
 }
 
 #[derive(Serialize)]
@@ -191,19 +245,75 @@ async fn get_dashboard_stats(state: State<'_, DbState>) -> Result<DashboardStats
     })
 }
 
+#[derive(Serialize)]
+struct TableInfo {
+    schemaname: String,
+    tablename: String,
+}
+
 #[tauri::command]
-async fn get_tables(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+async fn get_tables(state: State<'_, DbState>) -> Result<Vec<TableInfo>, String> {
     let pool = {
         let pool_guard = state.pool.lock().unwrap();
         pool_guard.as_ref().ok_or("Not connected")?.clone()
     };
 
-    let rows = sqlx::query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY tablename ASC")
+    let rows = sqlx::query("SELECT schemaname, tablename FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY schemaname, tablename ASC")
         .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("tablename")).collect())
+    Ok(rows.into_iter().map(|r| TableInfo {
+        schemaname: r.get("schemaname"),
+        tablename: r.get("tablename"),
+    }).collect())
+}
+
+#[tauri::command]
+async fn get_table_columns(
+    schema: String,
+    table: String,
+    state: State<'_, DbState>,
+) -> Result<Vec<ColumnInfo>, String> {
+    let pool = {
+        let pool_guard = state.pool.lock().unwrap();
+        pool_guard.as_ref().ok_or("Not connected")?.clone()
+    };
+
+    let rows = sqlx::query(
+        "SELECT column_name, data_type 
+         FROM information_schema.columns 
+         WHERE table_schema = $1 AND table_name = $2 
+         ORDER BY ordinal_position"
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.into_iter().map(|r| ColumnInfo {
+        name: r.get::<String, _>("column_name"),
+        data_type: r.get::<String, _>("data_type"),
+    }).collect())
+}
+
+#[tauri::command]
+async fn execute_utility(
+    query: String,
+    state: State<'_, DbState>,
+) -> Result<String, String> {
+    let pool = {
+        let pool_guard = state.pool.lock().unwrap();
+        pool_guard.as_ref().ok_or("Not connected")?.clone()
+    };
+
+    sqlx::query(&query)
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok("Command executed successfully".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -257,7 +367,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![connect_db, get_catalogs, execute_query, get_dashboard_stats, get_tables])
+        .invoke_handler(tauri::generate_handler![connect_db, switch_database, get_catalogs, execute_query, execute_utility, get_dashboard_stats, get_tables, get_table_columns])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

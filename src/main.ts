@@ -9,6 +9,7 @@ class AppState {
   private listeners: Set<(connected: boolean, host: string) => void> = new Set();
   private lastTotalXacts: number = 0;
   private pollInterval: any = null;
+  private activeDatabase: string = "postgres";
 
   private constructor() {}
 
@@ -72,8 +73,136 @@ class AppState {
     if (this.isConnected) fn(true, this.currentHost);
   }
 
+  setActiveDatabase(dbName: string) {
+    this.activeDatabase = dbName;
+  }
+
+  getActiveDatabase() {
+    return this.activeDatabase;
+  }
+
   getConnectionStatus() {
-    return { isConnected: this.isConnected, host: this.currentHost };
+    return { isConnected: this.isConnected, host: this.currentHost, activeDatabase: this.activeDatabase };
+  }
+}
+
+// --- Context Menu ---
+class ContextMenu {
+  private el: HTMLElement;
+  private static instance: ContextMenu;
+
+  private constructor() {
+    this.el = document.createElement("div");
+    this.el.className = "context-menu";
+    document.body.appendChild(this.el);
+
+    // Hide menu on any click or window resize
+    window.addEventListener("click", () => this.hide());
+    window.addEventListener("resize", () => this.hide());
+    // Also hide if right-clicking elsewhere
+    document.addEventListener("contextmenu", (e) => {
+      if (!(e.target as HTMLElement).closest(".tree-node")) {
+        this.hide();
+      }
+    });
+  }
+
+  static getInstance() {
+    if (!ContextMenu.instance) ContextMenu.instance = new ContextMenu();
+    return ContextMenu.instance;
+  }
+
+  show(x: number, y: number, items: { label: string, icon?: string, onClick: () => void, divider?: boolean }[]) {
+    this.el.innerHTML = "";
+    items.forEach(item => {
+      if (item.divider) {
+        const div = document.createElement("div");
+        div.className = "context-menu-divider";
+        this.el.appendChild(div);
+      }
+      const menuItem = document.createElement("div");
+      menuItem.className = "context-menu-item";
+      menuItem.innerHTML = `
+        ${item.icon || ''}
+        <span>${item.label}</span>
+      `;
+      menuItem.onclick = (e) => {
+        e.stopPropagation();
+        item.onClick();
+        this.hide();
+      };
+      this.el.appendChild(menuItem);
+    });
+
+    this.el.style.display = "block";
+    this.el.style.left = `${x}px`;
+    this.el.style.top = `${y}px`;
+
+    // Boundary check
+    const rect = this.el.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      this.el.style.left = `${x - rect.width}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      this.el.style.top = `${y - rect.height}px`;
+    }
+  }
+
+  hide() {
+    this.el.style.display = "none";
+  }
+}
+
+// --- Confirmation Modal ---
+class ConfirmModal {
+  private static instance: ConfirmModal;
+  private el: HTMLElement;
+  private titleEl: HTMLElement;
+  private messageEl: HTMLElement;
+  private okBtn: HTMLButtonElement;
+  private cancelBtn: HTMLButtonElement;
+  private resolveFn: ((value: boolean) => void) | null = null;
+
+  private constructor() {
+    this.el = document.getElementById("confirm-modal")!;
+    this.titleEl = document.getElementById("confirm-title")!;
+    this.messageEl = document.getElementById("confirm-message")!;
+    this.okBtn = document.getElementById("confirm-ok") as HTMLButtonElement;
+    this.cancelBtn = document.getElementById("confirm-cancel") as HTMLButtonElement;
+
+    this.okBtn.onclick = () => this.finish(true);
+    this.cancelBtn.onclick = () => this.finish(false);
+    this.el.onclick = (e) => {
+      if (e.target === this.el) this.finish(false);
+    };
+  }
+
+  static getInstance() {
+    if (!ConfirmModal.instance) ConfirmModal.instance = new ConfirmModal();
+    return ConfirmModal.instance;
+  }
+
+  static async ask(title: string, message: string, okLabel: string = "Proceed"): Promise<boolean> {
+    return ConfirmModal.getInstance().show(title, message, okLabel);
+  }
+
+  private show(title: string, message: string, okLabel: string): Promise<boolean> {
+    this.titleEl.textContent = title;
+    this.messageEl.textContent = message;
+    this.okBtn.textContent = okLabel;
+    this.el.style.display = "block";
+    
+    return new Promise((resolve) => {
+      this.resolveFn = resolve;
+    });
+  }
+
+  private finish(result: boolean) {
+    this.el.style.display = "none";
+    if (this.resolveFn) {
+      this.resolveFn(result);
+      this.resolveFn = null;
+    }
   }
 }
 
@@ -114,6 +243,13 @@ class QueryToolInstance {
     });
   }
 
+  setQuery(query: string, autoExecute: boolean = false) {
+    this.editor.value = query;
+    if (autoExecute) {
+      this.execute();
+    }
+  }
+
   async execute() {
     const query = this.editor.value.trim();
     if (!query) return;
@@ -128,7 +264,12 @@ class QueryToolInstance {
     const startTime = performance.now();
 
     try {
-      const result = await invoke("execute_query", { query }) as { columns: string[], rows: string[][] };
+      const result = await invoke("execute_query", { query }) as { 
+        columns: string[], 
+        rows: string[][],
+        rows_affected: number,
+        command_tag: string
+      };
       const duration = (performance.now() - startTime).toFixed(1);
 
       // Render Headers
@@ -140,7 +281,12 @@ class QueryToolInstance {
       `).join("");
 
       if (statusText) {
-        statusText.textContent = `Query finished in ${duration}ms. (${result.rows.length} rows)`;
+        const isDataReturning = result.rows.length > 0 || (result.command_tag === "SELECT" || result.command_tag === "SHOW" || result.command_tag === "WITH");
+        if (isDataReturning) {
+          statusText.textContent = `${result.command_tag} finished in ${duration}ms. (${result.rows.length} rows returned)`;
+        } else {
+          statusText.textContent = `${result.command_tag} finished in ${duration}ms. (${result.rows_affected} rows affected)`;
+        }
       }
     } catch (err) {
       console.error("Query execution failed:", err);
@@ -199,14 +345,14 @@ class TabManager {
     this.createTab("dashboard", "Dashboard", "dashboard-template", true);
   }
 
-  addQueryTool() {
+  addQueryTool(initialQuery?: string, autoExecute: boolean = false) {
     this.queryToolCount++;
     const id = `query-tool-${Date.now()}`;
     const title = `Query Tool (${this.queryToolCount})`;
-    this.createTab(id, title, "query-tool-template", false);
+    this.createTab(id, title, "query-tool-template", false, initialQuery, autoExecute);
   }
 
-  private createTab(id: string, title: string, templateId: string, isStatic: boolean) {
+  private createTab(id: string, title: string, templateId: string, isStatic: boolean, initialQuery?: string, autoExecute: boolean = false) {
     // 1. Create Tab Element
     const tabEl = document.createElement("div");
     tabEl.className = "tab";
@@ -234,6 +380,9 @@ class TabManager {
     let instance: QueryToolInstance | undefined;
     if (templateId === "query-tool-template") {
       instance = new QueryToolInstance(id, paneEl);
+      if (initialQuery) {
+        instance.setQuery(initialQuery, autoExecute);
+      }
     }
 
     this.tabs.set(id, { tabEl, paneEl, instance });
@@ -296,74 +445,160 @@ class TabManager {
 // --- Tree View ---
 class TreeView {
   private container: HTMLElement;
+  private tabManager: TabManager;
 
-  constructor(containerId: string) {
+  constructor(containerId: string, tabManager: TabManager) {
     this.container = document.getElementById(containerId)!;
+    this.tabManager = tabManager;
   }
 
   async renderServers(catalogs: string[]) {
     this.container.innerHTML = "";
+    const { host } = AppState.getInstance().getConnectionStatus();
     
-    for (const cat of catalogs) {
-      const dbNode = this.createNode(cat, "database", true);
-      this.container.appendChild(dbNode);
+    // 1. Server Node
+    const serverNode = this.createNode(host || "localhost", "database", true);
+    this.container.appendChild(serverNode);
+    
+    const serverChildren = document.createElement("div");
+    serverChildren.className = "tree-children";
+    this.container.appendChild(serverChildren);
+
+    // 2. Databases Folder
+    const databasesFolder = this.createNode("Databases", "folder", true);
+    serverChildren.appendChild(databasesFolder);
+
+    const databasesContainer = document.createElement("div");
+    databasesContainer.className = "tree-children";
+    databasesContainer.style.display = "block"; // Open by default
+    serverChildren.appendChild(databasesContainer);
+
+    databasesFolder.onclick = () => {
+      const isExpanded = databasesContainer.style.display !== "none";
+      databasesContainer.style.display = isExpanded ? "none" : "block";
+    };
+
+    // 3. Database List
+    for (const dbName of catalogs) {
+      const isConnected = dbName === AppState.getInstance().getActiveDatabase();
+      const dbNode = this.createNode(dbName, "database", true, undefined, undefined, isConnected);
+      databasesContainer.appendChild(dbNode);
       
-      const childrenContainer = document.createElement("div");
-      childrenContainer.className = "tree-children";
-      this.container.appendChild(childrenContainer);
+      const dbChildren = document.createElement("div");
+      dbChildren.className = "tree-children";
+      dbChildren.style.display = isConnected ? "block" : "none";
+      databasesContainer.appendChild(dbChildren);
 
-      // Create "Tables" folder
-      const tablesFolder = this.createNode("Tables", "folder", true);
-      childrenContainer.appendChild(tablesFolder);
+      dbNode.onclick = async () => {
+        const isExpanded = dbChildren.style.display !== "none";
+        const currentActive = AppState.getInstance().getActiveDatabase();
 
-      const tablesContainer = document.createElement("div");
-      tablesContainer.className = "tree-children";
-      tablesContainer.style.display = "none"; // Hide by default
-      childrenContainer.appendChild(tablesContainer);
+        // Switch Logic
+        if (dbName !== currentActive) {
+          try {
+            const statusText = document.querySelector("#status-text");
+            if (statusText) statusText.textContent = `Switching to database ${dbName}...`;
+            
+            await invoke("switch_database", { database: dbName });
+            AppState.getInstance().setActiveDatabase(dbName);
+            
+            // Re-render the whole server tree to update indicators
+            this.renderServers(catalogs);
+            return; // renderServers will handle the rest
+          } catch (err) {
+            console.error("Switch failed", err);
+            // alert("Failed to switch database: " + err);
+          }
+        }
 
-      // Expansion logic for "Tables" folder
-      tablesFolder.onclick = async () => {
-        const isExpanded = tablesContainer.style.display !== "none";
-        tablesContainer.style.display = isExpanded ? "none" : "block";
-        
-        if (!isExpanded && tablesContainer.innerHTML === "") {
-          tablesContainer.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
-          await this.fetchAndRenderTables(tablesContainer);
+        // Toggle Expand
+        dbChildren.style.display = isExpanded ? "none" : "block";
+        if (!isExpanded && dbChildren.innerHTML === "") {
+          dbChildren.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
+          await this.fetchAndRenderSchemas(dbChildren);
         }
       };
 
-      // Auto-expand the primary database (postgres)
-      if (cat === "postgres") {
-        tablesContainer.style.display = "block";
-        tablesContainer.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
-        await this.fetchAndRenderTables(tablesContainer);
+      // Auto-expand active DB schemas
+      if (isConnected && dbChildren.innerHTML === "") {
+        dbChildren.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
+        await this.fetchAndRenderSchemas(dbChildren);
       }
     }
   }
 
-  private async fetchAndRenderTables(container: HTMLElement) {
+  private async fetchAndRenderSchemas(container: HTMLElement) {
     try {
-      const tables = await invoke("get_tables") as string[];
+      const allTables = await invoke("get_tables") as { schemaname: string, tablename: string }[];
       container.innerHTML = "";
-      
-      if (tables.length === 0) {
-        container.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">(No tables)</div>';
-        return;
-      }
 
-      for (const table of tables) {
-        const tableNode = this.createNode(table, "table", false);
-        container.appendChild(tableNode);
+      // Group tables by schema
+      const grouped = allTables.reduce((acc, curr) => {
+        if (!acc[curr.schemaname]) acc[curr.schemaname] = [];
+        acc[curr.schemaname].push(curr.tablename);
+        return acc;
+      }, {} as Record<string, string[]>);
+
+      const schemas = Object.keys(grouped).sort();
+
+      for (const schemaName of schemas) {
+        const schemaNode = this.createNode(schemaName, "folder", true);
+        container.appendChild(schemaNode);
+
+        const schemaChildren = document.createElement("div");
+        schemaChildren.className = "tree-children";
+        schemaChildren.style.display = "none";
+        container.appendChild(schemaChildren);
+
+        schemaNode.onclick = () => {
+          const isExpanded = schemaChildren.style.display !== "none";
+          schemaChildren.style.display = isExpanded ? "none" : "block";
+          if (!isExpanded && schemaChildren.innerHTML === "") {
+            this.renderSchemaContents(schemaChildren, schemaName, grouped[schemaName]);
+          }
+        };
+
+        // Auto-expand the public schema for convenience
+        if (schemaName === "public") {
+          schemaChildren.style.display = "block";
+          this.renderSchemaContents(schemaChildren, schemaName, grouped[schemaName]);
+        }
       }
     } catch (err) {
-      console.error("Failed to fetch tables", err);
+      console.error("Failed to fetch schemas", err);
       container.innerHTML = '<div class="tree-node" style="color: var(--error); padding-left: 12px;">Failed to load</div>';
     }
   }
 
-  private createNode(label: string, type: "database" | "folder" | "table", isCollapsible: boolean): HTMLElement {
+  private renderSchemaContents(container: HTMLElement, schemaName: string, tables: string[]) {
+    container.innerHTML = "";
+    
+    // Create "Tables" folder inside the schema
+    const tablesFolder = this.createNode("Tables", "folder", true);
+    container.appendChild(tablesFolder);
+
+    const tablesContainer = document.createElement("div");
+    tablesContainer.className = "tree-children";
+    tablesContainer.style.display = "block"; // Auto-expand tables list if schema is expanded
+    container.appendChild(tablesContainer);
+
+    for (const tableName of tables) {
+      const fullId = `${schemaName}.${tableName}`;
+      const tableNode = this.createNode(tableName, "table", false, tablesContainer, fullId);
+      tablesContainer.appendChild(tableNode);
+    }
+
+    // Handle "Tables" folder toggle locally
+    tablesFolder.onclick = () => {
+      const isExpanded = tablesContainer.style.display !== "none";
+      tablesContainer.style.display = isExpanded ? "none" : "block";
+    };
+  }
+
+  private createNode(label: string, type: "database" | "folder" | "table", isCollapsible: boolean, parentContainer?: HTMLElement, fullId?: string, isActive: boolean = false): HTMLElement {
     const node = document.createElement("div");
     node.className = "tree-node";
+    if (isActive) node.classList.add("active");
     
     let icon = "";
     if (type === "database") {
@@ -372,21 +607,199 @@ class TreeView {
       icon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
     } else if (type === "table") {
       icon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>`;
+      
+      const queryId = fullId || label;
+
+      // Handle Context Menu
+      node.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Visual selection feedback
+        document.querySelectorAll(".tree-node").forEach(n => n.classList.remove("selected"));
+        node.classList.add("selected");
+
+        if (type === "table") {
+          this.showTableMenu(e.clientX, e.clientY, queryId, parentContainer);
+        } else if (type === "database") {
+          this.showDatabaseMenu(e.clientX, e.clientY, label);
+        } else if (type === "folder") {
+          this.showFolderMenu(e.clientX, e.clientY);
+        }
+      };
     }
 
     node.innerHTML = `
       <span class="tree-node-icon">${icon}</span>
       <span>${label}</span>
       ${isCollapsible ? '<span style="margin-left: auto; font-size: 8px; opacity: 0.5;">▼</span>' : ''}
+      ${isActive ? '<span class="connected-indicator" title="Connected"></span>' : ''}
     `;
+
+    // Normal Click selection
+    node.addEventListener("click", () => {
+      document.querySelectorAll(".tree-node").forEach(n => n.classList.remove("selected"));
+      node.classList.add("selected");
+    });
+
     return node;
+  }
+
+  private showDatabaseMenu(x: number, y: number, dbName: string) {
+    ContextMenu.getInstance().show(x, y, [
+      {
+        label: "Refresh",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+        onClick: async () => await this.refreshTree()
+      },
+      {
+        label: "Delete/Drop Database",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+        onClick: async () => {
+          const confirmed = await ConfirmModal.ask(
+            "Drop Database",
+            `Are you sure you want to drop database "${dbName}"? This action cannot be undone.`,
+            "Drop Database"
+          );
+          
+          if (confirmed) {
+            try {
+              await invoke("execute_utility", { query: `DROP DATABASE ${dbName}` });
+              await this.refreshTree();
+            } catch (err) {
+              alert("Error dropping database: " + err);
+            }
+          }
+        }
+      }
+    ]);
+  }
+
+  private showFolderMenu(x: number, y: number) {
+    ContextMenu.getInstance().show(x, y, [
+      {
+        label: "Refresh",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+        onClick: async () => await this.refreshTree()
+      }
+    ]);
+  }
+
+  private showTableMenu(x: number, y: number, queryId: string, parentContainer?: HTMLElement) {
+    const [schema, table] = queryId.split(".");
+
+    ContextMenu.getInstance().show(x, y, [
+      { 
+        label: "View Data (All Rows)", 
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+        onClick: () => this.tabManager.addQueryTool(`SELECT * FROM ${queryId} LIMIT 1000;`, true)
+      },
+      { 
+        label: "View Data (First 100)", 
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+        onClick: () => this.tabManager.addQueryTool(`SELECT * FROM ${queryId} LIMIT 100;`, true)
+      },
+      { divider: true, label: "", onClick: () => {} },
+      {
+        label: "Scripts > SELECT",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+        onClick: async () => this.generateScript("SELECT", schema, table)
+      },
+      {
+        label: "Scripts > INSERT",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+        onClick: async () => this.generateScript("INSERT", schema, table)
+      },
+      { divider: true, label: "", onClick: () => {} },
+      {
+        label: "Count Rows",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>`,
+        onClick: () => this.tabManager.addQueryTool(`SELECT count(*) FROM ${queryId};`, true)
+      },
+      {
+        label: "Truncate",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+        onClick: async () => {
+          const confirmed = await ConfirmModal.ask(
+            "Truncate Table",
+            `Are you sure you want to truncate table "${queryId}"? All data will be deleted.`,
+            "Truncate"
+          );
+          
+          if (confirmed) {
+            try {
+              await invoke("execute_utility", { query: `TRUNCATE TABLE ${queryId} RESTART IDENTITY CASCADE` });
+              // alert("Table truncated.");
+              const statusText = document.querySelector("#status-text");
+              if (statusText) statusText.textContent = `Table ${queryId} truncated successfully.`;
+            } catch (err) {
+              alert("Error: " + err);
+            }
+          }
+        }
+      },
+      {
+        label: "Drop Table",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+        onClick: async () => {
+          const confirmed = await ConfirmModal.ask(
+            "Drop Table",
+            `Are you sure you want to drop table "${queryId}"? This action cannot be undone.`,
+            "Drop Table"
+          );
+          
+          if (confirmed) {
+            try {
+              await invoke("execute_utility", { query: `DROP TABLE ${queryId} CASCADE` });
+              await this.refreshTree();
+            } catch (err) {
+              alert("Error: " + err);
+            }
+          }
+        }
+      },
+      { divider: true, label: "", onClick: () => {} },
+      {
+        label: "Refresh",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+        onClick: async () => await this.refreshTree()
+      }
+    ]);
+  }
+
+  private async generateScript(type: "SELECT" | "INSERT", schema: string, table: string) {
+    try {
+      const columns = await invoke("get_table_columns", { schema, table }) as { name: string, data_type: string }[];
+      const colNames = columns.map(c => c.name);
+      
+      let sql = "";
+      if (type === "SELECT") {
+        sql = `SELECT ${colNames.join(", ")}\nFROM ${schema}.${table};`;
+      } else if (type === "INSERT") {
+        const placeholders = colNames.map(c => `? /* ${c} */`).join(", ");
+        sql = `INSERT INTO ${schema}.${table} (${colNames.join(", ")})\nVALUES (${placeholders});`;
+      }
+
+      this.tabManager.addQueryTool(sql, false);
+    } catch (err) {
+      alert("Error generating script: " + err);
+    }
+  }
+
+  public async refreshTree() {
+    try {
+      const catalogs = await invoke("get_catalogs") as string[];
+      this.renderServers(catalogs);
+    } catch (err) {
+      console.error("Refresh failed", err);
+    }
   }
 }
 
 // --- App Initialization ---
 window.addEventListener("DOMContentLoaded", () => {
   const tabManager = new TabManager();
-  const treeView = new TreeView("server-list");
+  const treeView = new TreeView("server-list", tabManager);
   
   // Initial Tabs
   tabManager.addDashboard();
@@ -447,7 +860,7 @@ window.addEventListener("DOMContentLoaded", () => {
     submitBtn.textContent = "Connecting...";
 
     try {
-      await invoke("connect_db", { config: { host, port, user, pass } });
+      await invoke("connect_db", { config: { host, port, user, pass }, database: null });
       const catalogs = await invoke("get_catalogs") as string[];
 
       // Global Success State
