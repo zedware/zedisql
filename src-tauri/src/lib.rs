@@ -144,7 +144,14 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
     }
 
     if columns.is_empty() && result_rows.is_empty() && rows_affected == 0 {
-        return execute_query_fallback(query, &pool).await;
+        // Fallback: Try to get column metadata via describe()
+        if let Ok(desc) = pool.describe(&query).await {
+            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+
+        if columns.is_empty() {
+            return execute_query_fallback(query, &pool).await;
+        }
     }
 
     Ok(QueryResult {
