@@ -450,6 +450,21 @@ class TreeView {
   constructor(containerId: string, tabManager: TabManager) {
     this.container = document.getElementById(containerId)!;
     this.tabManager = tabManager;
+
+    // Suppress broad context menu in the sidebar area
+    this.container.closest("#sidebar")?.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+    });
+
+    // Attach to root node
+    const rootNode = document.getElementById("root-node");
+    if (rootNode) {
+      rootNode.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.showServerMenu(e.clientX, e.clientY);
+      };
+    }
   }
 
   async renderServers(catalogs: string[]) {
@@ -608,25 +623,25 @@ class TreeView {
     } else if (type === "table") {
       icon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>`;
       
-      const queryId = fullId || label;
+    const queryId = fullId || label;
 
-      // Handle Context Menu
-      node.oncontextmenu = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        // Visual selection feedback
-        document.querySelectorAll(".tree-node").forEach(n => n.classList.remove("selected"));
-        node.classList.add("selected");
+    // Handle Context Menu for all types
+    node.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Visual selection feedback
+      document.querySelectorAll(".tree-node").forEach(n => n.classList.remove("selected"));
+      node.classList.add("selected");
 
-        if (type === "table") {
-          this.showTableMenu(e.clientX, e.clientY, queryId, parentContainer);
-        } else if (type === "database") {
-          this.showDatabaseMenu(e.clientX, e.clientY, label);
-        } else if (type === "folder") {
-          this.showFolderMenu(e.clientX, e.clientY);
-        }
-      };
+      if (type === "table") {
+        this.showTableMenu(e.clientX, e.clientY, queryId, parentContainer);
+      } else if (type === "database") {
+        this.showDatabaseMenu(e.clientX, e.clientY, label);
+      } else if (type === "folder") {
+        this.showFolderMenu(e.clientX, e.clientY);
+      }
+    };
     }
 
     node.innerHTML = `
@@ -643,6 +658,26 @@ class TreeView {
     });
 
     return node;
+  }
+
+  private showServerMenu(x: number, y: number) {
+    ContextMenu.getInstance().show(x, y, [
+      {
+        label: "Refresh",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+        onClick: async () => await this.refreshTree()
+      },
+      {
+        label: "Disconnect",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
+        onClick: () => {
+          AppState.getInstance().setConnection(false, null);
+          const modal = document.querySelector("#connection-modal") as HTMLElement;
+          if (modal) modal.style.display = "block";
+          this.container.innerHTML = "";
+        }
+      }
+    ]);
   }
 
   private showDatabaseMenu(x: number, y: number, dbName: string) {
