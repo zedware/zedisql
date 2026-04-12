@@ -113,12 +113,13 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
         .unwrap_or_else(|| "QUERY".to_string());
 
     while let Some(res) = stream.next().await {
-        match res.map_err(|e| {
-            // If binary fetch fails, try fallback
-            e.to_string()
-        })? {
+        match res.map_err(|e| e.to_string())? {
             sqlx::Either::Left(result) => {
                 rows_affected += result.rows_affected();
+                // Capture columns from result set metadata if available
+                if columns.is_empty() {
+                    columns = result.columns().iter().map(|c| c.name().to_string()).collect();
+                }
             }
             sqlx::Either::Right(row) => {
                 if columns.is_empty() {
@@ -143,90 +144,10 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
         }
     }
 
-    if columns.is_empty() && result_rows.is_empty() && rows_affected == 0 {
-        // Fallback: Try to get column metadata via describe()
-        if let Ok(desc) = pool.describe(&query).await {
-            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
-        }
-
-        if columns.is_empty() {
-            return execute_query_fallback(query, &pool).await;
-        }
-    }
-
     Ok(QueryResult {
         columns,
         rows: result_rows,
         rows_affected,
-        command_tag,
-    })
-}
-
-async fn execute_query_fallback(query: String, pool: &sqlx::PgPool) -> Result<QueryResult, String> {
-    let q_trimmed = query.trim().to_lowercase();
-    let command_tag = q_trimmed
-        .split_whitespace()
-        .next()
-        .map(|s| s.to_uppercase())
-        .unwrap_or_else(|| "QUERY".to_string());
-
-    if q_trimmed.starts_with("select")
-        || q_trimmed.starts_with("with")
-        || q_trimmed.starts_with("show")
-    {
-        let wrapped_query = format!("SELECT json_agg(t) FROM ({}) t", query);
-        let json_row = sqlx::query(&wrapped_query)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| format!("JSON Fallback failed: {}", e))?;
-
-        let json_val: Option<serde_json::Value> = json_row.try_get(0).map_err(|e| e.to_string())?;
-
-        if let Some(serde_json::Value::Array(ref arr)) = json_val {
-            if arr.is_empty() {
-                return Ok(QueryResult {
-                    columns: vec![],
-                    rows: vec![],
-                    rows_affected: 0,
-                    command_tag,
-                });
-            }
-
-            let mut columns = Vec::new();
-            if let Some(serde_json::Value::Object(obj)) = arr.first() {
-                columns = obj.keys().cloned().collect();
-            }
-
-            let mut result_rows = Vec::new();
-            for item in arr {
-                if let serde_json::Value::Object(obj) = item {
-                    let mut row = Vec::new();
-                    for col in &columns {
-                        let val = obj.get(col).cloned().unwrap_or(serde_json::Value::Null);
-                        row.push(match val {
-                            serde_json::Value::String(s) => s,
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            serde_json::Value::Null => "null".to_string(),
-                            _ => val.to_string(),
-                        });
-                    }
-                    result_rows.push(row);
-                }
-            }
-            return Ok(QueryResult {
-                columns,
-                rows: result_rows,
-                rows_affected: arr.len() as u64,
-                command_tag,
-            });
-        }
-    }
-
-    Ok(QueryResult {
-        columns: vec![],
-        rows: vec![],
-        rows_affected: 0,
         command_tag,
     })
 }
