@@ -695,7 +695,7 @@ class TreeView {
   }
 
   private showDatabaseMenu(x: number, y: number, dbName: string) {
-    const isActive = AppState.getInstance().activeDatabase === dbName;
+    const isActive = AppState.getInstance().getActiveDatabase() === dbName;
     
     const menuItems = [
       {
@@ -935,6 +935,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
       // Global Success State
       AppState.getInstance().setConnection(true, host);
+      AppState.getInstance().setActiveDatabase("postgres"); // Explicit Initial Sync
       
       if (statusText) statusText.textContent = "Connected successfully.";
       treeView.renderServers(catalogs);
