@@ -859,10 +859,65 @@ class TreeView {
   public async refreshTree() {
     try {
       const catalogs = await invoke("get_catalogs") as string[];
-      this.renderServers(catalogs);
+      await this.renderServers(catalogs);
+      
+      // Re-apply search filter if active
+      const searchInput = document.getElementById("tree-search") as HTMLInputElement;
+      if (searchInput && searchInput.value) {
+        this.applyFilter(searchInput.value);
+      }
     } catch (err) {
       console.error("Refresh failed", err);
     }
+  }
+
+  public applyFilter(query: string) {
+    const q = query.toLowerCase().trim();
+    const allNodes = Array.from(this.container.querySelectorAll(".tree-node"));
+    const allContainers = Array.from(this.container.querySelectorAll(".tree-children"));
+
+    // Reset visibility
+    allNodes.forEach(n => (n as HTMLElement).classList.remove("hidden"));
+    allContainers.forEach(c => (c as HTMLElement).classList.remove("hidden"));
+
+    if (!q) return;
+
+    // Filter
+    allNodes.forEach(node => {
+      const el = node as HTMLElement;
+      const text = el.textContent?.toLowerCase() || "";
+      const matches = text.includes(q);
+
+      if (!matches) {
+        el.classList.add("hidden");
+        // Hide associated children if any
+        const next = el.nextElementSibling;
+        if (next?.classList.contains("tree-children")) {
+          (next as HTMLElement).classList.add("hidden");
+        }
+      }
+    });
+
+    // Reveal parents of matched nodes
+    allNodes.forEach(node => {
+      const el = node as HTMLElement;
+      if (!el.classList.contains("hidden")) {
+        let parent = el.parentElement;
+        while (parent && parent !== this.container) {
+          if (parent.classList.contains("tree-children")) {
+            parent.classList.remove("hidden");
+            parent.style.display = "block"; // Expand parent to show match
+            
+            // Show the folder/parent node itself
+            const parentNode = parent.previousElementSibling;
+            if (parentNode?.classList.contains("tree-node")) {
+              (parentNode as HTMLElement).classList.remove("hidden");
+            }
+          }
+          parent = parent.parentElement;
+        }
+      }
+    });
   }
 }
 
@@ -870,6 +925,23 @@ class TreeView {
 window.addEventListener("DOMContentLoaded", () => {
   const tabManager = new TabManager();
   const treeView = new TreeView("server-list", tabManager);
+
+  // --- Search Logic ---
+  const searchInput = document.getElementById("tree-search") as HTMLInputElement;
+  const clearSearchBtn = document.getElementById("btn-clear-search");
+
+  searchInput?.addEventListener("input", (e) => {
+    const query = (e.target as HTMLInputElement).value;
+    treeView.applyFilter(query);
+  });
+
+  clearSearchBtn?.addEventListener("click", () => {
+    if (searchInput) {
+      searchInput.value = "";
+      treeView.applyFilter("");
+      searchInput.focus();
+    }
+  });
   
   // Initial Tabs
   tabManager.addDashboard();
