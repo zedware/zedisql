@@ -161,6 +161,24 @@
       </div>
     </div>
 
+    <template id="history-template">
+      <div class="history-view">
+        <div class="history-toolbar">
+          <div class="history-search-container">
+            <svg class="search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="history-search" placeholder="Search history..." spellcheck="false" />
+          </div>
+          <button id="btn-clear-all-history" class="tool-btn" style="color: var(--error);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Clear All
+          </button>
+        </div>
+        <div id="history-list-container" class="history-list">
+          <!-- History entries will be injected here -->
+        </div>
+      </div>
+    </template>
+
     <script type="module" src="/src/main.ts" defer></script>
   </body>
 </html>
