@@ -505,32 +505,17 @@ class TreeView {
       databasesContainer.appendChild(dbChildren);
 
       dbNode.onclick = async () => {
-        const isExpanded = dbChildren.style.display !== "none";
-        const currentActive = AppState.getInstance().getActiveDatabase();
-
-        // Switch Logic
-        if (dbName !== currentActive) {
-          try {
-            const statusText = document.querySelector("#status-text");
-            if (statusText) statusText.textContent = `Switching to database ${dbName}...`;
-            
-            await invoke("switch_database", { database: dbName });
-            AppState.getInstance().setActiveDatabase(dbName);
-            
-            // Re-render the whole server tree to update indicators
-            this.renderServers(catalogs);
-            return; // renderServers will handle the rest
-          } catch (err) {
-            console.error("Switch failed", err);
-            // alert("Failed to switch database: " + err);
+        const isActive = AppState.getInstance().getActiveDatabase() === dbName;
+        if (!isActive) {
+          await this.connectToDatabase(dbName);
+        } else {
+          // Toggle Expand if already active
+          const isExpanded = dbChildren.style.display !== "none";
+          dbChildren.style.display = isExpanded ? "none" : "block";
+          if (!isExpanded && dbChildren.innerHTML === "") {
+            dbChildren.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
+            await this.fetchAndRenderSchemas(dbChildren);
           }
-        }
-
-        // Toggle Expand
-        dbChildren.style.display = isExpanded ? "none" : "block";
-        if (!isExpanded && dbChildren.innerHTML === "") {
-          dbChildren.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
-          await this.fetchAndRenderSchemas(dbChildren);
         }
       };
 
@@ -539,6 +524,35 @@ class TreeView {
         dbChildren.innerHTML = '<div class="tree-node" style="color: var(--text-muted); padding-left: 12px;">Loading...</div>';
         await this.fetchAndRenderSchemas(dbChildren);
       }
+    }
+  }
+
+  private async connectToDatabase(dbName: string) {
+    try {
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = `Connecting to database ${dbName}...`;
+      
+      await invoke("switch_database", { database: dbName });
+      AppState.getInstance().setActiveDatabase(dbName);
+      
+      // Re-render the whole server tree to update indicators and expansion
+      await this.refreshTree();
+    } catch (err) {
+      console.error("Connect failed", err);
+      alert("Failed to connect to database: " + err);
+    }
+  }
+
+  private async disconnectDatabase() {
+    try {
+      // Disconnect from the current active database
+      AppState.getInstance().setActiveDatabase(null);
+      await this.refreshTree();
+      
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = "Database disconnected.";
+    } catch (err) {
+      console.error("Disconnect failed", err);
     }
   }
 
@@ -681,33 +695,54 @@ class TreeView {
   }
 
   private showDatabaseMenu(x: number, y: number, dbName: string) {
-    ContextMenu.getInstance().show(x, y, [
+    const isActive = AppState.getInstance().activeDatabase === dbName;
+    
+    const menuItems = [
       {
         label: "Refresh",
         icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
         onClick: async () => await this.refreshTree()
-      },
-      {
-        label: "Delete/Drop Database",
-        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
-        onClick: async () => {
-          const confirmed = await ConfirmModal.ask(
-            "Drop Database",
-            `Are you sure you want to drop database "${dbName}"? This action cannot be undone.`,
-            "Drop Database"
-          );
-          
-          if (confirmed) {
-            try {
-              await invoke("execute_utility", { query: `DROP DATABASE ${dbName}` });
-              await this.refreshTree();
-            } catch (err) {
-              alert("Error dropping database: " + err);
-            }
+      }
+    ];
+
+    if (!isActive) {
+      menuItems.push({
+        label: "Connect Database",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`,
+        onClick: async () => await this.connectToDatabase(dbName)
+      });
+    } else {
+      menuItems.push({
+        label: "Disconnect Database",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`,
+        onClick: async () => await this.disconnectDatabase()
+      });
+    }
+
+    menuItems.push({ divider: true, label: "", onClick: () => {} });
+    
+    menuItems.push({
+      label: "Delete/Drop Database",
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+      onClick: async () => {
+        const confirmed = await ConfirmModal.ask(
+          "Drop Database",
+          `Are you sure you want to drop database "${dbName}"? This action cannot be undone.`,
+          "Drop Database"
+        );
+        
+        if (confirmed) {
+          try {
+            await invoke("execute_utility", { query: `DROP DATABASE ${dbName}` });
+            await this.refreshTree();
+          } catch (err) {
+            alert("Error dropping database: " + err);
           }
         }
       }
-    ]);
+    });
+
+    ContextMenu.getInstance().show(x, y, menuItems);
   }
 
   private showFolderMenu(x: number, y: number) {
