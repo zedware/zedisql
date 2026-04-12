@@ -322,6 +322,14 @@ class QueryToolInstance {
         ? "Enter your SQL query here..."
         : "Connect to a server to start writing SQL...";
     });
+
+    // Handle Ctrl+Enter / Cmd+Enter execution
+    this.editor.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        this.execute();
+      }
+    });
   }
 
   setQuery(query: string, autoExecute: boolean = false) {
