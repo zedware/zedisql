@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use futures::StreamExt;
-use sqlx::{Pool, Postgres, Row, Column};
-use tauri::{Emitter, State};
-use tauri::menu::{Menu, MenuItem, Submenu};
+use serde::{Deserialize, Serialize};
+use sqlx::{Column, Pool, Postgres, Row};
 use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::{Emitter, State};
 
 #[derive(Default)]
 struct DbState {
@@ -61,13 +61,13 @@ async fn connect_db(
 }
 
 #[tauri::command]
-async fn switch_database(
-    database: String,
-    state: State<'_, DbState>,
-) -> Result<String, String> {
+async fn switch_database(database: String, state: State<'_, DbState>) -> Result<String, String> {
     let config = {
         let config_guard = state.config.lock().unwrap();
-        config_guard.as_ref().ok_or("No connection config stored")?.clone()
+        config_guard
+            .as_ref()
+            .ok_or("No connection config stored")?
+            .clone()
     };
 
     connect_db(config, Some(database), state).await
@@ -85,14 +85,14 @@ async fn get_catalogs(state: State<'_, DbState>) -> Result<Vec<String>, String> 
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("datname")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("datname"))
+        .collect())
 }
 
 #[tauri::command]
-async fn execute_query(
-    query: String,
-    state: State<'_, DbState>,
-) -> Result<QueryResult, String> {
+async fn execute_query(query: String, state: State<'_, DbState>) -> Result<QueryResult, String> {
     let pool = {
         let pool_guard = state.pool.lock().unwrap();
         pool_guard.as_ref().ok_or("Not connected")?.clone()
@@ -103,9 +103,12 @@ async fn execute_query(
     let mut columns = Vec::new();
     let mut result_rows = Vec::new();
     let mut rows_affected = 0;
-    
+
     // Simple command tag extraction
-    let command_tag = query.trim().split_whitespace().next()
+    let command_tag = query
+        .trim()
+        .split_whitespace()
+        .next()
         .map(|s| s.to_uppercase())
         .unwrap_or_else(|| "QUERY".to_string());
 
@@ -144,37 +147,44 @@ async fn execute_query(
         return execute_query_fallback(query, &pool).await;
     }
 
-    Ok(QueryResult { 
-        columns, 
-        rows: result_rows, 
-        rows_affected, 
-        command_tag 
+    Ok(QueryResult {
+        columns,
+        rows: result_rows,
+        rows_affected,
+        command_tag,
     })
 }
 
-async fn execute_query_fallback(
-    query: String,
-    pool: &sqlx::PgPool,
-) -> Result<QueryResult, String> {
+async fn execute_query_fallback(query: String, pool: &sqlx::PgPool) -> Result<QueryResult, String> {
     let q_trimmed = query.trim().to_lowercase();
-    let command_tag = q_trimmed.split_whitespace().next()
+    let command_tag = q_trimmed
+        .split_whitespace()
+        .next()
         .map(|s| s.to_uppercase())
         .unwrap_or_else(|| "QUERY".to_string());
 
-    if q_trimmed.starts_with("select") || q_trimmed.starts_with("with") || q_trimmed.starts_with("show") {
+    if q_trimmed.starts_with("select")
+        || q_trimmed.starts_with("with")
+        || q_trimmed.starts_with("show")
+    {
         let wrapped_query = format!("SELECT json_agg(t) FROM ({}) t", query);
         let json_row = sqlx::query(&wrapped_query)
             .fetch_one(pool)
             .await
             .map_err(|e| format!("JSON Fallback failed: {}", e))?;
-        
+
         let json_val: Option<serde_json::Value> = json_row.try_get(0).map_err(|e| e.to_string())?;
-        
+
         if let Some(serde_json::Value::Array(ref arr)) = json_val {
             if arr.is_empty() {
-                return Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: 0, command_tag });
+                return Ok(QueryResult {
+                    columns: vec![],
+                    rows: vec![],
+                    rows_affected: 0,
+                    command_tag,
+                });
             }
-            
+
             let mut columns = Vec::new();
             if let Some(serde_json::Value::Object(obj)) = arr.first() {
                 columns = obj.keys().cloned().collect();
@@ -197,11 +207,21 @@ async fn execute_query_fallback(
                     result_rows.push(row);
                 }
             }
-            return Ok(QueryResult { columns, rows: result_rows, rows_affected: arr.len() as u64, command_tag });
+            return Ok(QueryResult {
+                columns,
+                rows: result_rows,
+                rows_affected: arr.len() as u64,
+                command_tag,
+            });
         }
     }
-    
-    Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: 0, command_tag })
+
+    Ok(QueryResult {
+        columns: vec![],
+        rows: vec![],
+        rows_affected: 0,
+        command_tag,
+    })
 }
 
 #[derive(Serialize)]
@@ -219,22 +239,26 @@ async fn get_dashboard_stats(state: State<'_, DbState>) -> Result<DashboardStats
     };
 
     // 1. Fetch sessions
-    let sessions_row = sqlx::query("SELECT 
+    let sessions_row = sqlx::query(
+        "SELECT 
             count(*) FILTER (WHERE state = 'active') as active,
             count(*) FILTER (WHERE state = 'idle') as idle
-            FROM pg_stat_activity")
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+            FROM pg_stat_activity",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     let active_sessions: i64 = sessions_row.get("active");
     let idle_sessions: i64 = sessions_row.get("idle");
 
     // 2. Fetch total transactions (across whole server)
-    let xacts_row = sqlx::query("SELECT sum(xact_commit + xact_rollback)::bigint as total FROM pg_stat_database")
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let xacts_row = sqlx::query(
+        "SELECT sum(xact_commit + xact_rollback)::bigint as total FROM pg_stat_database",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     let total_xacts: i64 = xacts_row.get::<Option<i64>, _>("total").unwrap_or(0);
 
@@ -263,10 +287,13 @@ async fn get_tables(state: State<'_, DbState>) -> Result<Vec<TableInfo>, String>
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.into_iter().map(|r| TableInfo {
-        schemaname: r.get("schemaname"),
-        tablename: r.get("tablename"),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| TableInfo {
+            schemaname: r.get("schemaname"),
+            tablename: r.get("tablename"),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -284,7 +311,7 @@ async fn get_table_columns(
         "SELECT column_name, data_type 
          FROM information_schema.columns 
          WHERE table_schema = $1 AND table_name = $2 
-         ORDER BY ordinal_position"
+         ORDER BY ordinal_position",
     )
     .bind(schema)
     .bind(table)
@@ -292,17 +319,17 @@ async fn get_table_columns(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.into_iter().map(|r| ColumnInfo {
-        name: r.get::<String, _>("column_name"),
-        data_type: r.get::<String, _>("data_type"),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ColumnInfo {
+            name: r.get::<String, _>("column_name"),
+            data_type: r.get::<String, _>("data_type"),
+        })
+        .collect())
 }
 
 #[tauri::command]
-async fn execute_utility(
-    query: String,
-    state: State<'_, DbState>,
-) -> Result<String, String> {
+async fn execute_utility(query: String, state: State<'_, DbState>) -> Result<String, String> {
     let pool = {
         let pool_guard = state.pool.lock().unwrap();
         pool_guard.as_ref().ok_or("Not connected")?.clone()
@@ -324,7 +351,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             let menu = Menu::default(handle)?;
-            
+
             // Find existing "File" submenu or create it
             let mut file_menu = None;
             for item in menu.items()? {
@@ -336,9 +363,10 @@ pub fn run() {
                 }
             }
 
-            let connect_i = MenuItem::with_id(handle, "connect", "Connect", true, Some("CmdOrCtrl+N"))?;
+            let connect_i =
+                MenuItem::with_id(handle, "connect", "Connect", true, Some("CmdOrCtrl+N"))?;
             let save_i = MenuItem::with_id(handle, "save", "Save", true, Some("CmdOrCtrl+S"))?;
-            
+
             if let Some(ref fm) = file_menu {
                 let _ = fm.append(&connect_i);
                 let _ = fm.append(&save_i);
@@ -349,25 +377,47 @@ pub fn run() {
 
             // Create "Query" menu
             let execute_i = MenuItem::with_id(handle, "execute", "Execute", true, Some("F5"))?;
-            let new_query_i = MenuItem::with_id(handle, "new-query", "New Query Tool", true, Some("CmdOrCtrl+T"))?;
-            let query_menu = Submenu::with_items(handle, "Query", true, &[&execute_i, &new_query_i])?;
+            let new_query_i = MenuItem::with_id(
+                handle,
+                "new-query",
+                "New Query Tool",
+                true,
+                Some("CmdOrCtrl+T"),
+            )?;
+            let query_menu =
+                Submenu::with_items(handle, "Query", true, &[&execute_i, &new_query_i])?;
             let _ = menu.insert(&query_menu, 2);
 
             app.set_menu(menu)?;
 
-            app.on_menu_event(move |app, event| {
-                match event.id.0.as_str() {
-                    "connect" => { let _ = app.emit("menu-connect", ()); }
-                    "save" => { let _ = app.emit("menu-save", ()); }
-                    "execute" => { let _ = app.emit("menu-execute", ()); }
-                    "new-query" => { let _ = app.emit("menu-new-query", ()); }
-                    _ => {}
+            app.on_menu_event(move |app, event| match event.id.0.as_str() {
+                "connect" => {
+                    let _ = app.emit("menu-connect", ());
                 }
+                "save" => {
+                    let _ = app.emit("menu-save", ());
+                }
+                "execute" => {
+                    let _ = app.emit("menu-execute", ());
+                }
+                "new-query" => {
+                    let _ = app.emit("menu-new-query", ());
+                }
+                _ => {}
             });
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![connect_db, switch_database, get_catalogs, execute_query, execute_utility, get_dashboard_stats, get_tables, get_table_columns])
+        .invoke_handler(tauri::generate_handler![
+            connect_db,
+            switch_database,
+            get_catalogs,
+            execute_query,
+            execute_utility,
+            get_dashboard_stats,
+            get_tables,
+            get_table_columns
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
