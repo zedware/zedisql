@@ -137,13 +137,16 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
                     let val: String = row.try_get::<String, _>(i)
                         .unwrap_or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<i32, _>(i).map(|v| v.to_string())
+                        .unwrap_or_else(|_| row.try_get::<i16, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string())
+                        .unwrap_or_else(|_| row.try_get::<f32, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<bool, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<chrono::DateTime<chrono::Local>, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<chrono::NaiveDateTime, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<chrono::NaiveDate, _>(i).map(|v| v.to_string())
                         .unwrap_or_else(|_| row.try_get::<rust_decimal::Decimal, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| "null".to_string())))))))));
+                        .unwrap_or_else(|_| row.try_get::<serde_json::Value, _>(i).map(|v| v.to_string())
+                        .unwrap_or_else(|_| "null".to_string()))))))))))));
                     values.push(val);
                 }
                 result_rows.push(values);
