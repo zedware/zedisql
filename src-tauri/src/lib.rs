@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sqlx::{Column, Pool, Postgres, Row};
+use sqlx::postgres::Postgres;
+use sqlx::{Column, Pool, Row, Executor};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, State};
@@ -98,13 +99,23 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
         pool_guard.as_ref().ok_or("Not connected")?.clone()
     };
 
-    let query_string = query.clone();
-    let mut stream = sqlx::raw_sql(&query_string).fetch_many(&pool);
+    let query_obj = sqlx::raw_sql(&query);
+    
+    // 1. Fetch metadata using describe() to support zero-row results
     let mut columns = Vec::new();
+    if let Ok(desc) = pool.describe(&query).await {
+        columns = desc
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect::<Vec<String>>();
+    }
+
+    // 2. Execute and fetch data
+    let mut stream = query_obj.fetch_many(&pool);
     let mut result_rows = Vec::new();
     let mut rows_affected = 0;
 
-    // Simple command tag extraction
     let command_tag = query
         .trim()
         .split_whitespace()
@@ -116,10 +127,6 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
         match res.map_err(|e| e.to_string())? {
             sqlx::Either::Left(result) => {
                 rows_affected += result.rows_affected();
-                // Capture columns from result set metadata if available
-                if columns.is_empty() {
-                    columns = result.columns().iter().map(|c| c.name().to_string()).collect();
-                }
             }
             sqlx::Either::Right(row) => {
                 if columns.is_empty() {
