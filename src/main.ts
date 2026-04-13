@@ -972,6 +972,12 @@ class TreeView {
 
     ContextMenu.getInstance().show(x, y, [
       {
+        label: "Refresh",
+        icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+        onClick: async () => await this.refreshTree()
+      },
+      { divider: true, label: "", onClick: () => { } },
+      {
         label: "View Data (All Rows)",
         icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
         onClick: () => this.tabManager.addQueryTool(`SELECT * FROM ${queryId} LIMIT 1000;`, true)
