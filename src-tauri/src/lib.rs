@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::Postgres;
-use sqlx::{Column, Pool, Row, Executor};
+use sqlx::{Column, Pool, Row, Executor, ValueRef};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, State};
@@ -134,20 +134,31 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
                 }
                 let mut values = Vec::new();
                 for i in 0..row.columns().len() {
-                    let val: String = row.try_get::<String, _>(i)
-                        .unwrap_or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<i32, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<i16, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<f32, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<bool, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<chrono::DateTime<chrono::Local>, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<chrono::NaiveDateTime, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<chrono::NaiveDate, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<rust_decimal::Decimal, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| row.try_get::<serde_json::Value, _>(i).map(|v| v.to_string())
-                        .unwrap_or_else(|_| "null".to_string()))))))))))));
-                    values.push(val);
+                    let mut val_str = String::new();
+                    if let Ok(raw) = row.try_get_raw(i) {
+                        if raw.is_null() {
+                            val_str = "null".to_string();
+                        } else if let Ok(s) = raw.as_str() {
+                            val_str = s.to_string();
+                        }
+                    }
+                    // Fallback to specific typpings if text decoding fails (mostly for binary protocol safety)
+                    if val_str.is_empty() {
+                        val_str = row.try_get::<String, _>(i)
+                            .unwrap_or_else(|_| row.try_get::<i64, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<i32, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<i16, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<f64, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<f32, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<bool, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<chrono::DateTime<chrono::Local>, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<chrono::NaiveDateTime, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<chrono::NaiveDate, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<rust_decimal::Decimal, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| row.try_get::<serde_json::Value, _>(i).map(|v| v.to_string())
+                            .unwrap_or_else(|_| "null".to_string()))))))))))));
+                    }
+                    values.push(val_str);
                 }
                 result_rows.push(values);
             }
