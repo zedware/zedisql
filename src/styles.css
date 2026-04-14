@@ -356,18 +356,60 @@ body {
   background-color: var(--bg-base);
 }
 
+/* Syntax Highlighter Overlay Container */
+.sql-highlighter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  pointer-events: none;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  color: #dcdcdc;
+  z-index: 1;
+}
+
+.sql-code {
+  font-family: inherit;
+  font-size: inherit;
+}
+
 .sql-editor {
+  position: absolute;
+  top: 0; 
+  left: 0;
   width: 100%;
   height: 100%;
-  background-color: transparent;
+  background-color: transparent !important;
+  color: transparent !important;
+  caret-color: #dcdcdc;
   border: none;
-  color: #dcdcdc;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 14px;
   padding: 8px 12px;
   outline: none;
   resize: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  box-sizing: border-box;
+  z-index: 2;
 }
+
+/* Grammar Colors */
+.hl-keyword { color: #569cd6; font-weight: bold; }
+.hl-string { color: #ce9178; }
+.hl-number { color: #b5cea8; }
+.hl-function { color: #dcdcaa; }
+.hl-operator { color: #d4d4d4; }
+.hl-comment { color: #6a9955; font-style: italic; }
 
 .sql-editor:read-only {
   background-color: transparent;

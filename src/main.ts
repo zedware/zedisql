@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { PG_KEYWORDS, PG_FUNCTIONS, PG_TYPES } from "./sqlKeywords";
 
 // --- Utilities ---
 function escapeHtml(text: string): string {
@@ -287,6 +288,8 @@ class QueryToolInstance {
   private id: string;
   private container: HTMLElement;
   private editor: HTMLTextAreaElement;
+  private preContainer: HTMLElement;
+  private codeLayer: HTMLElement;
   private executeBtn: HTMLButtonElement;
   private saveBtn: HTMLButtonElement;
   private resultsHead: HTMLElement;
@@ -298,6 +301,8 @@ class QueryToolInstance {
     this.id = id;
     this.container = container;
     this.editor = container.querySelector(".sql-editor") as HTMLTextAreaElement;
+    this.preContainer = container.querySelector(".sql-highlighter") as HTMLElement;
+    this.codeLayer = container.querySelector(".sql-code") as HTMLElement;
     this.executeBtn = container.querySelector(".btn-execute") as HTMLButtonElement;
     this.saveBtn = container.querySelector(".btn-save") as HTMLButtonElement;
     this.resultsHead = container.querySelector(".results-head") as HTMLElement;
@@ -314,6 +319,13 @@ class QueryToolInstance {
   private init() {
     this.executeBtn.addEventListener("click", () => this.execute());
     this.saveBtn.addEventListener("click", () => this.save());
+
+    // Setup Syntax Highlighting Sync
+    this.editor.addEventListener("input", () => this.syncHighlight());
+    this.editor.addEventListener("scroll", () => {
+      this.preContainer.scrollTop = this.editor.scrollTop;
+      this.preContainer.scrollLeft = this.editor.scrollLeft;
+    });
 
     // Subscribe to connection changes
     AppState.getInstance().onConnectionChange((connected) => {
@@ -334,9 +346,39 @@ class QueryToolInstance {
 
   setQuery(query: string, autoExecute: boolean = false) {
     this.editor.value = query;
+    this.syncHighlight();
     if (autoExecute) {
       this.execute();
     }
+  }
+
+  private syncHighlight() {
+    let text = this.editor.value;
+    if (text[text.length - 1] === "\n") text += " ";
+    
+    // 1. Escape HTML
+    text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    // 2. Tokenize logic (single pass execution to prevent double-replacements)
+    const regex = /('.*?'|--.*$|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b\w+\b|[-+*\/=<>!]+)/gm;
+    
+    text = text.replace(regex, (match) => {
+        if (match.startsWith("'")) return `<span class="hl-string">${match}</span>`;
+        if (match.startsWith("--") || match.startsWith("/*")) return `<span class="hl-comment">${match}</span>`;
+        if (/^[\d.]+$/.test(match)) return `<span class="hl-number">${match}</span>`;
+        
+        if (/^[a-zA-Z_]\w*$/.test(match)) {
+            const upper = match.toUpperCase();
+            if (PG_KEYWORDS.has(upper)) return `<span class="hl-keyword">${match}</span>`;
+            if (PG_FUNCTIONS.has(upper) || PG_FUNCTIONS.has(match.toLowerCase())) return `<span class="hl-function">${match}</span>`;
+            if (PG_TYPES.has(upper) || PG_TYPES.has(match.toLowerCase())) return `<span class="hl-keyword" style="color: #4ec9b0;">${match}</span>`;
+        }
+        
+        if (/^[-+*\/=<>!]+$/.test(match)) return `<span class="hl-operator">${match}</span>`;
+        return match;
+    });
+
+    this.codeLayer.innerHTML = text;
   }
 
   async execute() {
