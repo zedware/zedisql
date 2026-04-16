@@ -291,6 +291,7 @@ export class QueryToolInstance {
   private preContainer: HTMLElement;
   private codeLayer: HTMLElement;
   private executeBtn: HTMLButtonElement;
+  private cancelBtn: HTMLButtonElement;
   private saveBtn: HTMLButtonElement;
   private resultsHead: HTMLElement;
   private resultsBody: HTMLElement;
@@ -304,6 +305,7 @@ export class QueryToolInstance {
     this.preContainer = container.querySelector(".sql-highlighter") as HTMLElement;
     this.codeLayer = container.querySelector(".sql-code") as HTMLElement;
     this.executeBtn = container.querySelector(".btn-execute") as HTMLButtonElement;
+    this.cancelBtn = container.querySelector(".btn-cancel") as HTMLButtonElement;
     this.saveBtn = container.querySelector(".btn-save") as HTMLButtonElement;
     this.resultsHead = container.querySelector(".results-head") as HTMLElement;
     this.resultsBody = container.querySelector(".results-body") as HTMLElement;
@@ -318,6 +320,7 @@ export class QueryToolInstance {
 
   private init() {
     this.executeBtn.addEventListener("click", () => this.execute());
+    this.cancelBtn.addEventListener("click", () => this.cancel());
     this.saveBtn.addEventListener("click", () => this.save());
 
     // Setup Syntax Highlighting Sync
@@ -381,6 +384,14 @@ export class QueryToolInstance {
     this.codeLayer.innerHTML = text;
   }
 
+  async cancel() {
+    try {
+      await invoke("cancel_query", { tabId: this.id });
+    } catch (err) {
+      console.error("Failed to cancel query:", err);
+    }
+  }
+
   async execute() {
     const query = this.editor.value.trim();
     if (!query) return;
@@ -392,10 +403,12 @@ export class QueryToolInstance {
     }
 
     this.resultsContainer.classList.add("executing");
+    this.executeBtn.style.display = "none";
+    this.cancelBtn.style.display = "flex";
     const startTime = performance.now();
 
     try {
-      const result = await invoke("execute_query", { query }) as {
+      const result = await invoke("execute_query", { query, tabId: this.id }) as {
         columns: string[],
         rows: string[][],
         rows_affected: number,
@@ -435,6 +448,8 @@ export class QueryToolInstance {
         (statusText.parentElement as HTMLElement).style.backgroundColor = "var(--error)";
       }
     } finally {
+      this.executeBtn.style.display = "flex";
+      this.cancelBtn.style.display = "none";
       this.resultsContainer.classList.remove("executing");
     }
   }

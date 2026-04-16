@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::postgres::Postgres;
 use sqlx::{Column, Pool, Row, Executor, ValueRef};
 use std::sync::Mutex;
+use std::collections::HashMap;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, State};
 
@@ -10,6 +11,7 @@ use tauri::{Emitter, State};
 struct DbState {
     pool: Mutex<Option<Pool<Postgres>>>,
     config: Mutex<Option<DbConfig>>,
+    active_queries: Mutex<HashMap<String, i32>>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -168,13 +170,61 @@ pub async fn execute_query_internal(pool: &Pool<Postgres>, query: &str) -> Resul
 }
 
 #[tauri::command]
-async fn execute_query(query: String, state: State<'_, DbState>) -> Result<QueryResult, String> {
+async fn execute_query(query: String, tab_id: String, state: State<'_, DbState>) -> Result<QueryResult, String> {
     let pool = {
         let pool_guard = state.pool.lock().unwrap();
         pool_guard.as_ref().ok_or("Not connected")?.clone()
     };
 
-    execute_query_internal(&pool, &query).await
+    // 1. Get backend PID to support cancellation
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| format!("Failed to initialize session: {}", e))?;
+
+    // 2. Register PID for this tab
+    {
+        let mut active = state.active_queries.lock().unwrap();
+        active.insert(tab_id.clone(), pid);
+    }
+
+    // 3. Execute
+    let result = execute_query_internal(&pool, &query).await;
+
+    // 4. Cleanup registration
+    {
+        let mut active = state.active_queries.lock().unwrap();
+        active.remove(&tab_id);
+    }
+
+    // 5. Handle user-friendly cancel message
+    match result {
+        Err(e) if e.contains("canceling statement due to user request") || e.contains("57014") => {
+            Err("Query cancelled by user".to_string())
+        }
+        _ => result
+    }
+}
+
+#[tauri::command]
+async fn cancel_query(tab_id: String, state: State<'_, DbState>) -> Result<(), String> {
+    let (pool, pid) = {
+        let pool_guard = state.pool.lock().unwrap();
+        let active = state.active_queries.lock().unwrap();
+        
+        let pool = pool_guard.as_ref().ok_or("Not connected")?.clone();
+        let pid = active.get(&tab_id).copied().ok_or("No active query to cancel")?;
+        (pool, pid)
+    };
+
+    // Execute cancellation request on a separate connection
+    sqlx::query("SELECT pg_cancel_backend($1)")
+        .bind(pid)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Cancellation request failed: {}", e))?;
+
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -366,6 +416,7 @@ pub fn run() {
             switch_database,
             get_catalogs,
             execute_query,
+            cancel_query,
             execute_utility,
             get_dashboard_stats,
             get_tables,

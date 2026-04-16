@@ -13,6 +13,7 @@ describe("TabManager", () => {
         <div class="query-tool">
           <div class="query-toolbar">
             <button class="tool-btn execute btn-execute">Execute</button>
+            <button class="tool-btn btn-cancel" style="display: none;">Cancel</button>
             <button class="tool-btn btn-save">Save</button>
           </div>
           <div class="editor-container">
