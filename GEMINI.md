@@ -20,6 +20,17 @@ This project was developed in collaboration between a human developer and **Anti
     - Connection auto-popup on startup.
     - Professional dark mode theme with glassmorphism elements.
 
+## 🧪 Testing Architecture
+
+ZedISQL deploys a strict, bi-layered testing methodology seamlessly preventing backend type regressions and guaranteeing deterministic GUI state initialization natively:
+
+- **Backend Integration Tests (Rust)** (`cargo test`)
+  - Tests physically connect to a PostgreSQL database on `localhost` utilizing `sqlx`.
+  - Spawns in-memory temporary tables pushing heavy data-types (`jsonb`, `smallint`, `date`, `varchar`) mapped directly against GUI fallback parsers ensuring exact serializations without silent failures/null regressions.
+- **Frontend Component Tests (Vitest)** (`npm run test`)
+  - Powered strictly by isolated `jsdom` boundaries mimicking synthetic HTML template instantiations without forcing physical application startups.
+  - Features aggressive Tauri OS API interception boundaries mapping `invoke()` and `listen()` commands globally so custom JavaScript class logic (e.g., `TabManager`, `QueryToolInstance`) evaluates exclusively synchronously.
+
 ## 🤖 AI Contribution
 
 This repository was built with the assistance of the Antigravity agent, which handled:

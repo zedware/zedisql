@@ -284,7 +284,7 @@ class ConfirmModal {
 }
 
 // --- Query Tool Instance ---
-class QueryToolInstance {
+export class QueryToolInstance {
   private id: string;
   private container: HTMLElement;
   private editor: HTMLTextAreaElement;
@@ -551,7 +551,7 @@ class HistoryView {
 }
 
 // --- Tab Manager ---
-class TabManager {
+export class TabManager {
   private tabBar: HTMLElement;
   private viewContainer: HTMLElement;
   private tabs: Map<string, { tabEl: HTMLElement, paneEl: HTMLElement, instance?: QueryToolInstance, historyView?: HistoryView }> = new Map();

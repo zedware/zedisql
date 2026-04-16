@@ -27,7 +27,7 @@ struct ColumnInfo {
 }
 
 #[derive(Serialize)]
-struct QueryResult {
+pub struct QueryResult {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
     rows_affected: u64,
@@ -92,18 +92,12 @@ async fn get_catalogs(state: State<'_, DbState>) -> Result<Vec<String>, String> 
         .collect())
 }
 
-#[tauri::command]
-async fn execute_query(query: String, state: State<'_, DbState>) -> Result<QueryResult, String> {
-    let pool = {
-        let pool_guard = state.pool.lock().unwrap();
-        pool_guard.as_ref().ok_or("Not connected")?.clone()
-    };
-
-    let query_obj = sqlx::raw_sql(&query);
+pub async fn execute_query_internal(pool: &Pool<Postgres>, query: &str) -> Result<QueryResult, String> {
+    let query_obj = sqlx::raw_sql(query);
     
     // 1. Fetch metadata using describe() to support zero-row results
     let mut columns = Vec::new();
-    if let Ok(desc) = pool.describe(&query).await {
+    if let Ok(desc) = pool.describe(query).await {
         columns = desc
             .columns()
             .iter()
@@ -112,7 +106,7 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
     }
 
     // 2. Execute and fetch data
-    let mut stream = query_obj.fetch_many(&pool);
+    let mut stream = query_obj.fetch_many(pool);
     let mut result_rows = Vec::new();
     let mut rows_affected = 0;
 
@@ -171,6 +165,16 @@ async fn execute_query(query: String, state: State<'_, DbState>) -> Result<Query
         rows_affected,
         command_tag,
     })
+}
+
+#[tauri::command]
+async fn execute_query(query: String, state: State<'_, DbState>) -> Result<QueryResult, String> {
+    let pool = {
+        let pool_guard = state.pool.lock().unwrap();
+        pool_guard.as_ref().ok_or("Not connected")?.clone()
+    };
+
+    execute_query_internal(&pool, &query).await
 }
 
 #[derive(Serialize)]
@@ -369,4 +373,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    #[tokio::test]
+    async fn test_datatype_parsing_regression() {
+        // Default local environment for testing. Adjust if running in CI without postgres:postgres.
+        let url = "postgres://postgres:postgres@localhost:5432/postgres";
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(url)
+            .await
+            .expect("Test environment requires a postgres database on localhost:5432");
+
+        // 1. Create a temporary table with complex types
+        let _ = execute_query_internal(
+            &pool, 
+            "CREATE TEMP TABLE test_datatypes (id smallint, metadata jsonb, score real, tags json, phrase varchar);"
+        ).await.expect("Failed to create temp table");
+
+        // 2. Insert robust mock data
+        let _ = execute_query_internal(
+            &pool, 
+            "INSERT INTO test_datatypes (id, metadata, score, tags, phrase) VALUES (12, '{\"key\": \"value\"}', 42.5, '[1,2,3]', 'regression');"
+        ).await.expect("Failed to insert mock data");
+
+        // 3. Select the data back out to verify type decoupling
+        let result = execute_query_internal(&pool, "SELECT id, metadata, score, tags, phrase FROM test_datatypes;").await.unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        let row = &result.rows[0];
+        
+        // Assert perfectly decoded str representations
+        assert_eq!(row[0], "12"); // smallint
+        // Postgres serializes JSON/JSONB with specific spacial rules, but checking presence ensures non-null.
+        assert!(row[1].contains("\"key\": \"value\"")); // jsonb
+        assert_eq!(row[2], "42.5"); // real
+        assert!(row[3].contains("1")); // json array string match
+        assert_eq!(row[4], "regression"); // string
+    }
 }
