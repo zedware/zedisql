@@ -6374,8 +6374,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_isql"
-version = "0.1.0"
+name = "zedisql"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "futures",

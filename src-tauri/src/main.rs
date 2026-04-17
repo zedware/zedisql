@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    zed_isql_lib::run()
+    zedisql_lib::run()
 }
