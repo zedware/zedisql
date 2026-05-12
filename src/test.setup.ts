@@ -17,7 +17,7 @@ Object.defineProperty(window, 'matchMedia', {
 
 // 2. Mock Tauri IPC routes so frontend doesn't crash requesting Rust
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn().mockImplementation((cmd, args) => {
+  invoke: vi.fn().mockImplementation((cmd, _args) => {
     if (cmd === "get_catalogs") {
       return Promise.resolve(["mockDB", "postgres", "testdb"]);
     }

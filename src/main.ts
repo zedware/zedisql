@@ -82,11 +82,11 @@ class HistoryManager {
 class AppState {
   private static instance: AppState;
   private isConnected: boolean = false;
-  private currentHost: string = "";
-  private listeners: Set<(connected: boolean, host: string) => void> = new Set();
+  private currentHost: string | null = "";
+  private listeners: Set<(connected: boolean, host: string | null) => void> = new Set();
   private lastTotalXacts: number = 0;
   private pollInterval: any = null;
-  private activeDatabase: string = "postgres";
+  private activeDatabase: string | null = "postgres";
 
   private constructor() { }
 
@@ -95,7 +95,7 @@ class AppState {
     return AppState.instance;
   }
 
-  setConnection(status: boolean, host: string) {
+  setConnection(status: boolean, host: string | null) {
     this.isConnected = status;
     this.currentHost = host;
     this.listeners.forEach(fn => fn(status, host));
@@ -145,17 +145,17 @@ class AppState {
     }
   }
 
-  onConnectionChange(fn: (connected: boolean, host: string) => void) {
+  onConnectionChange(fn: (connected: boolean, host: string | null) => void) {
     this.listeners.add(fn);
     if (this.isConnected) fn(true, this.currentHost);
   }
 
-  setActiveDatabase(dbName: string) {
+  setActiveDatabase(dbName: string | null) {
     this.activeDatabase = dbName;
   }
 
   getActiveDatabase() {
-    return this.activeDatabase;
+    return this.activeDatabase || "";
   }
 
   getConnectionStatus() {
@@ -164,6 +164,13 @@ class AppState {
 }
 
 // --- Context Menu ---
+interface MenuItem {
+  label: string;
+  icon?: string;
+  onClick: () => void | Promise<void>;
+  divider?: boolean;
+}
+
 class ContextMenu {
   private el: HTMLElement;
   private static instance: ContextMenu;
@@ -189,26 +196,27 @@ class ContextMenu {
     return ContextMenu.instance;
   }
 
-  show(x: number, y: number, items: { label: string, icon?: string, onClick: () => void, divider?: boolean }[]) {
+  show(x: number, y: number, items: MenuItem[]) {
     this.el.innerHTML = "";
     items.forEach(item => {
       if (item.divider) {
         const div = document.createElement("div");
         div.className = "context-menu-divider";
         this.el.appendChild(div);
+      } else {
+        const menuItem = document.createElement("div");
+        menuItem.className = "context-menu-item";
+        menuItem.innerHTML = `
+          ${item.icon || ''}
+          <span>${item.label}</span>
+        `;
+        menuItem.onclick = (e) => {
+          e.stopPropagation();
+          item.onClick();
+          this.hide();
+        };
+        this.el.appendChild(menuItem);
       }
-      const menuItem = document.createElement("div");
-      menuItem.className = "context-menu-item";
-      menuItem.innerHTML = `
-        ${item.icon || ''}
-        <span>${item.label}</span>
-      `;
-      menuItem.onclick = (e) => {
-        e.stopPropagation();
-        item.onClick();
-        this.hide();
-      };
-      this.el.appendChild(menuItem);
     });
 
     this.el.style.display = "block";
@@ -286,7 +294,6 @@ class ConfirmModal {
 // --- Query Tool Instance ---
 export class QueryToolInstance {
   private id: string;
-  private container: HTMLElement;
   private editor: HTMLTextAreaElement;
   private preContainer: HTMLElement;
   private codeLayer: HTMLElement;
@@ -300,7 +307,6 @@ export class QueryToolInstance {
 
   constructor(id: string, container: HTMLElement) {
     this.id = id;
-    this.container = container;
     this.editor = container.querySelector(".sql-editor") as HTMLTextAreaElement;
     this.preContainer = container.querySelector(".sql-highlighter") as HTMLElement;
     this.codeLayer = container.querySelector(".sql-code") as HTMLElement;
@@ -696,7 +702,7 @@ export class TabManager {
 
       // If we closed the active tab, switch to the first available one
       if (this.tabs.size > 0) {
-        const firstId = this.tabs.keys().next().value;
+        const firstId = this.tabs.keys().next().value as string;
         this.switchTab(firstId);
       }
     }
@@ -765,7 +771,7 @@ class TreeView {
     // 3. Database List
     for (const dbName of catalogs) {
       const isConnected = dbName === AppState.getInstance().getActiveDatabase();
-      const dbNode = this.createNode(dbName, "database", true, undefined, undefined, isConnected);
+      const dbNode = this.createNode(dbName, "database", true, undefined, isConnected);
       databasesContainer.appendChild(dbNode);
 
       const dbChildren = document.createElement("div");
@@ -882,7 +888,7 @@ class TreeView {
 
     for (const tableName of tables) {
       const fullId = `${schemaName}.${tableName}`;
-      const tableNode = this.createNode(tableName, "table", false, tablesContainer, fullId);
+      const tableNode = this.createNode(tableName, "table", false, fullId);
       tablesContainer.appendChild(tableNode);
     }
 
@@ -893,7 +899,7 @@ class TreeView {
     };
   }
 
-  private createNode(label: string, type: "database" | "folder" | "table", isCollapsible: boolean, parentContainer?: HTMLElement, fullId?: string, isActive: boolean = false): HTMLElement {
+  private createNode(label: string, type: "database" | "folder" | "table", isCollapsible: boolean, fullId?: string, isActive: boolean = false): HTMLElement {
     const node = document.createElement("div");
     node.className = "tree-node";
     if (isActive) node.classList.add("active");
@@ -919,7 +925,7 @@ class TreeView {
         node.classList.add("selected");
 
         if (type === "table") {
-          this.showTableMenu(e.clientX, e.clientY, queryId, parentContainer);
+          this.showTableMenu(e.clientX, e.clientY, queryId);
         } else if (type === "database") {
           this.showDatabaseMenu(e.clientX, e.clientY, label);
         } else if (type === "folder") {
@@ -966,7 +972,7 @@ class TreeView {
   private showDatabaseMenu(x: number, y: number, dbName: string) {
     const isActive = AppState.getInstance().getActiveDatabase() === dbName;
 
-    const menuItems = [
+    const menuItems: MenuItem[] = [
       {
         label: "Refresh",
         icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
@@ -988,7 +994,7 @@ class TreeView {
       });
     }
 
-    menuItems.push({ divider: true, label: "", onClick: () => { } });
+    menuItems.push({ divider: true, label: "", onClick: async () => { } });
 
     menuItems.push({
       label: "Delete/Drop Database",
@@ -1024,7 +1030,7 @@ class TreeView {
     ]);
   }
 
-  private showTableMenu(x: number, y: number, queryId: string, parentContainer?: HTMLElement) {
+  private showTableMenu(x: number, y: number, queryId: string) {
     const [schema, table] = queryId.split(".");
 
     ContextMenu.getInstance().show(x, y, [
