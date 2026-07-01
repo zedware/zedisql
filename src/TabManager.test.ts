@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from "vitest";
-import { TabManager } from "./main";
+import { AppZoomManager, TabManager } from "./main";
 
 describe("TabManager", () => {
   beforeEach(() => {
@@ -58,5 +58,37 @@ describe("TabManager", () => {
     expect(viewContainer.querySelector(".sql-editor")).not.toBeNull();
     // Test the generated syntax highlighter container injected earlier successfully survived component duplication
     expect(viewContainer.querySelector(".sql-highlighter")).not.toBeNull();
+  });
+
+  test("supports VS Code-style zoom hotkeys", () => {
+    localStorage.clear();
+    const zoomManager = new AppZoomManager();
+    zoomManager.init();
+
+    const zoomIn = new KeyboardEvent("keydown", {
+      key: "=",
+      code: "Equal",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(zoomIn);
+
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(zoomManager.getZoom()).toBe(1.1);
+    expect(document.documentElement.style.getPropertyValue("--app-zoom")).toBe("1.1");
+    expect(document.body.style.getPropertyValue("zoom")).toBe("1.1");
+
+    const reset = new KeyboardEvent("keydown", {
+      key: "0",
+      code: "Digit0",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(reset);
+
+    expect(reset.defaultPrevented).toBe(true);
+    expect(zoomManager.getZoom()).toBe(1);
   });
 });

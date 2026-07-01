@@ -12,6 +12,9 @@
   --success: #40c057;
   --error: #fa5252;
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --app-zoom: 1;
+  --app-viewport-width: 100vw;
+  --app-viewport-height: 100vh;
 }
 
 * {
@@ -24,10 +27,11 @@ body {
   font-family: var(--font-family);
   background-color: var(--bg-base);
   color: var(--text-main);
-  height: 100vh;
-  width: 100vw;
+  height: var(--app-viewport-height);
+  width: var(--app-viewport-width);
   overflow: hidden;
   font-size: 13px;
+  zoom: var(--app-zoom);
   /* Dense pgAdmin style */
 }
 
@@ -40,7 +44,8 @@ body {
     "status-bar status-bar";
   grid-template-rows: 40px 1fr 24px;
   grid-template-columns: 220px 1fr;
-  height: 100vh;
+  width: var(--app-viewport-width);
+  height: var(--app-viewport-height);
 }
 
 /* Top Navigation / Breadcrumbs */

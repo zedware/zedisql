@@ -9,6 +9,102 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+// --- App Zoom ---
+export class AppZoomManager {
+  private static instance: AppZoomManager;
+  private static readonly STORAGE_KEY = "zedisql_app_zoom";
+  private readonly minZoom = 0.8;
+  private readonly maxZoom = 1.6;
+  private readonly step = 0.1;
+  private zoom: number;
+  private initialized = false;
+  private readonly handleKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
+
+  constructor(private readonly doc: Document = document) {
+    this.zoom = this.loadZoom();
+  }
+
+  static getInstance() {
+    if (!AppZoomManager.instance) AppZoomManager.instance = new AppZoomManager();
+    return AppZoomManager.instance;
+  }
+
+  init() {
+    this.apply();
+    if (this.initialized) return;
+    this.doc.addEventListener("keydown", this.handleKeyDown);
+    this.initialized = true;
+  }
+
+  getZoom() {
+    return this.zoom;
+  }
+
+  increase() {
+    this.setZoom(this.zoom + this.step);
+  }
+
+  decrease() {
+    this.setZoom(this.zoom - this.step);
+  }
+
+  reset() {
+    this.setZoom(1);
+  }
+
+  private onKeyDown(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+
+    if (e.code === "Equal" || e.code === "NumpadAdd" || e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      this.increase();
+    } else if (e.code === "Minus" || e.code === "NumpadSubtract" || e.key === "-") {
+      e.preventDefault();
+      this.decrease();
+    } else if (e.code === "Digit0" || e.code === "Numpad0" || e.key === "0") {
+      e.preventDefault();
+      this.reset();
+    }
+  }
+
+  private setZoom(nextZoom: number) {
+    const clamped = Math.min(this.maxZoom, Math.max(this.minZoom, nextZoom));
+    this.zoom = Math.round(clamped * 100) / 100;
+    this.saveZoom();
+    this.apply();
+  }
+
+  private apply() {
+    this.doc.documentElement.style.setProperty("--app-zoom", this.zoom.toString());
+    this.doc.documentElement.style.setProperty("--app-viewport-width", `${100 / this.zoom}vw`);
+    this.doc.documentElement.style.setProperty("--app-viewport-height", `${100 / this.zoom}vh`);
+    if (!this.doc.body) return;
+
+    this.doc.body.style.setProperty("zoom", this.zoom.toString());
+  }
+
+  private loadZoom() {
+    try {
+      const stored = localStorage.getItem(AppZoomManager.STORAGE_KEY);
+      if (!stored) return 1;
+      const parsed = Number(stored);
+      return Number.isFinite(parsed)
+        ? Math.min(this.maxZoom, Math.max(this.minZoom, parsed))
+        : 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  private saveZoom() {
+    try {
+      localStorage.setItem(AppZoomManager.STORAGE_KEY, this.zoom.toString());
+    } catch {
+      // Storage can be unavailable in restricted webviews or test environments.
+    }
+  }
+}
+
 // --- History Management ---
 interface HistoryEntry {
   id: string;
@@ -1204,6 +1300,8 @@ class TreeView {
 
 // --- App Initialization ---
 window.addEventListener("DOMContentLoaded", () => {
+  AppZoomManager.getInstance().init();
+
   const tabManager = new TabManager();
   const treeView = new TreeView("server-list", tabManager);
 
