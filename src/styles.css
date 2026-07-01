@@ -11,7 +11,12 @@
   --accent-hover: #339af0;
   --success: #40c057;
   --error: #fa5252;
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-ui-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-editor-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-data-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-ui-size: 13px;
+  --font-editor-size: 14px;
+  --font-data-size: 13px;
   --app-zoom: 1;
   --app-viewport-width: 100vw;
   --app-viewport-height: 100vh;
@@ -24,15 +29,21 @@
 }
 
 body {
-  font-family: var(--font-family);
+  font-family: var(--font-ui-family);
   background-color: var(--bg-base);
   color: var(--text-main);
   height: var(--app-viewport-height);
   width: var(--app-viewport-width);
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--font-ui-size);
   zoom: var(--app-zoom);
   /* Dense pgAdmin style */
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
 }
 
 /* App Shell Layout */
@@ -239,7 +250,7 @@ body {
   background-color: var(--bg-tab-inactive);
   color: var(--text-muted);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-ui-size);
   position: relative;
   transition: all 0.2s;
   display: flex;
@@ -343,7 +354,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-ui-size);
 }
 
 .tool-btn:hover {
@@ -370,8 +381,8 @@ body {
   bottom: 0;
   margin: 0;
   pointer-events: none;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 14px;
+  font-family: var(--font-editor-family);
+  font-size: var(--font-editor-size);
   padding: 8px 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -397,8 +408,8 @@ body {
   color: transparent !important;
   caret-color: #dcdcdc;
   border: none;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 14px;
+  font-family: var(--font-editor-family);
+  font-size: var(--font-editor-size);
   padding: 8px 12px;
   outline: none;
   resize: none;
@@ -444,6 +455,8 @@ body {
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  font-family: var(--font-data-family);
+  font-size: var(--font-data-size);
 }
 
 .data-table th {
@@ -500,6 +513,7 @@ body {
   border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
+  align-items: center;
 }
 
 .modal-body {
@@ -523,6 +537,7 @@ body {
   color: var(--text-main);
   padding: 8px 12px;
   border-radius: 4px;
+  font-size: var(--font-ui-size);
 }
 
 .modal-footer {
@@ -675,7 +690,7 @@ body {
   align-items: center;
   gap: 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-ui-size);
   color: var(--text-main);
   transition: all 0.1s;
 }
@@ -821,7 +836,7 @@ body {
   background: none;
   border: none;
   color: var(--text-main);
-  font-size: 13px;
+  font-size: var(--font-ui-size);
   outline: none;
   width: 100%;
 }
@@ -879,8 +894,8 @@ body {
 }
 
 .history-item-content {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 12px;
+  font-family: var(--font-data-family);
+  font-size: var(--font-data-size);
   color: var(--text-main);
   white-space: pre-wrap;
   word-break: break-all;
@@ -926,6 +941,35 @@ body {
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+.font-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 16px;
+}
+
+.font-preview {
+  border: 1px solid var(--border-color);
+  background: var(--bg-base);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-top: 4px;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.font-preview.editor,
+.font-preview.data {
+  font-family: var(--font-editor-family);
+  font-size: var(--font-editor-size);
+}
+
+.font-preview.data {
+  font-family: var(--font-data-family);
+  font-size: var(--font-data-size);
 }
 
 .history-action-btn:hover {

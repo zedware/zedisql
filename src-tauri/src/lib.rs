@@ -369,12 +369,25 @@ pub fn run() {
             let connect_i =
                 MenuItem::with_id(handle, "connect", "Connect", true, Some("CmdOrCtrl+N"))?;
             let save_i = MenuItem::with_id(handle, "save", "Save", true, Some("CmdOrCtrl+S"))?;
+            let font_settings_i = MenuItem::with_id(
+                handle,
+                "font-settings",
+                "Font Settings",
+                true,
+                Some("CmdOrCtrl+,"),
+            )?;
 
             if let Some(ref fm) = file_menu {
                 let _ = fm.append(&connect_i);
                 let _ = fm.append(&save_i);
+                let _ = fm.append(&font_settings_i);
             } else {
-                let fm = Submenu::with_items(handle, "File", true, &[&connect_i, &save_i])?;
+                let fm = Submenu::with_items(
+                    handle,
+                    "File",
+                    true,
+                    &[&connect_i, &save_i, &font_settings_i],
+                )?;
                 let _ = menu.insert(&fm, 1);
             }
 
@@ -399,6 +412,9 @@ pub fn run() {
                 }
                 "save" => {
                     let _ = app.emit("menu-save", ());
+                }
+                "font-settings" => {
+                    let _ = app.emit("menu-font-settings", ());
                 }
                 "execute" => {
                     let _ = app.emit("menu-execute", ());

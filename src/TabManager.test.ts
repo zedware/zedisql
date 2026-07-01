@@ -1,8 +1,10 @@
 import { describe, expect, test, beforeEach } from "vitest";
-import { AppZoomManager, TabManager } from "./main";
+import { AppFontManager, AppZoomManager, TabManager } from "./main";
 
 describe("TabManager", () => {
   beforeEach(() => {
+    localStorage.clear();
+
     // Inject neutral graphical binding locations.
     document.body.innerHTML = `
       <div id="tab-bar"></div>
@@ -35,6 +37,7 @@ describe("TabManager", () => {
         <div class="history-view"><ul class="history-list"></ul></div>
       </template>
     `;
+    document.documentElement.removeAttribute("style");
   });
 
   test("instantiates successfully when bound to fresh DOM references", () => {
@@ -61,7 +64,6 @@ describe("TabManager", () => {
   });
 
   test("supports VS Code-style zoom hotkeys", () => {
-    localStorage.clear();
     const zoomManager = new AppZoomManager();
     zoomManager.init();
 
@@ -90,5 +92,36 @@ describe("TabManager", () => {
 
     expect(reset.defaultPrevented).toBe(true);
     expect(zoomManager.getZoom()).toBe(1);
+  });
+
+  test("persists configurable UI, editor, and data fonts", () => {
+    const fontManager = new AppFontManager();
+    fontManager.init();
+
+    fontManager.updateSettings({
+      uiFamily: "Segoe UI",
+      uiSize: 15,
+      editorFamily: "Cascadia Code",
+      editorSize: 18,
+      dataFamily: "Consolas",
+      dataSize: 16,
+    }, true);
+
+    expect(document.documentElement.style.getPropertyValue("--font-ui-family")).toContain("Segoe UI");
+    expect(document.documentElement.style.getPropertyValue("--font-editor-family")).toContain("Cascadia Code");
+    expect(document.documentElement.style.getPropertyValue("--font-data-family")).toContain("Consolas");
+    expect(document.documentElement.style.getPropertyValue("--font-ui-size")).toBe("15px");
+    expect(document.documentElement.style.getPropertyValue("--font-editor-size")).toBe("18px");
+    expect(document.documentElement.style.getPropertyValue("--font-data-size")).toBe("16px");
+
+    const restoredManager = new AppFontManager();
+    expect(restoredManager.getSettings()).toMatchObject({
+      uiFamily: "Segoe UI",
+      uiSize: 15,
+      editorFamily: "Cascadia Code",
+      editorSize: 18,
+      dataFamily: "Consolas",
+      dataSize: 16,
+    });
   });
 });

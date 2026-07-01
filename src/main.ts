@@ -105,6 +105,211 @@ export class AppZoomManager {
   }
 }
 
+// --- Font Settings ---
+export interface FontSettings {
+  uiFamily: string;
+  uiSize: number;
+  editorFamily: string;
+  editorSize: number;
+  dataFamily: string;
+  dataSize: number;
+}
+
+export class AppFontManager {
+  private static instance: AppFontManager;
+  private static readonly STORAGE_KEY = "zedisql_font_settings";
+  private static readonly DEFAULT_SETTINGS: FontSettings = {
+    uiFamily: "Inter",
+    uiSize: 13,
+    editorFamily: "JetBrains Mono",
+    editorSize: 14,
+    dataFamily: "JetBrains Mono",
+    dataSize: 13,
+  };
+
+  private settings: FontSettings;
+  private savedSettings: FontSettings;
+  private initialized = false;
+  private readonly handleKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
+
+  constructor(private readonly doc: Document = document) {
+    this.settings = this.loadSettings();
+    this.savedSettings = { ...this.settings };
+  }
+
+  static getInstance() {
+    if (!AppFontManager.instance) AppFontManager.instance = new AppFontManager();
+    return AppFontManager.instance;
+  }
+
+  init() {
+    this.apply();
+    this.bindModal();
+    if (this.initialized) return;
+    this.doc.addEventListener("keydown", this.handleKeyDown);
+    this.initialized = true;
+  }
+
+  show() {
+    this.savedSettings = { ...this.settings };
+    this.populateForm();
+    this.getModal()?.style.setProperty("display", "block");
+    this.getInput("font-ui-family")?.focus();
+  }
+
+  getSettings() {
+    return { ...this.settings };
+  }
+
+  updateSettings(nextSettings: Partial<FontSettings>, persist = false) {
+    this.settings = this.normalizeSettings({ ...this.settings, ...nextSettings });
+    this.apply();
+    if (persist) {
+      this.savedSettings = { ...this.settings };
+      this.saveSettings();
+    }
+  }
+
+  reset() {
+    this.settings = { ...AppFontManager.DEFAULT_SETTINGS };
+    this.populateForm();
+    this.apply();
+  }
+
+  private onKeyDown(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (e.key !== ",") return;
+
+    e.preventDefault();
+    this.show();
+  }
+
+  private bindModal() {
+    const form = this.doc.getElementById("font-settings-form") as HTMLFormElement | null;
+    if (!form || form.dataset.bound === "true") return;
+    form.dataset.bound = "true";
+
+    form.addEventListener("input", () => {
+      this.settings = this.readForm();
+      this.apply();
+    });
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.settings = this.readForm();
+      this.updateSettings(this.settings, true);
+      this.hide();
+    });
+
+    this.doc.getElementById("font-settings-reset")?.addEventListener("click", () => this.reset());
+    this.doc.getElementById("font-settings-cancel")?.addEventListener("click", () => this.cancel());
+    this.doc.getElementById("font-settings-close-icon")?.addEventListener("click", () => this.cancel());
+    this.getModal()?.addEventListener("click", (e) => {
+      if (e.target === this.getModal()) this.cancel();
+    });
+  }
+
+  private cancel() {
+    this.settings = { ...this.savedSettings };
+    this.apply();
+    this.hide();
+  }
+
+  private hide() {
+    this.getModal()?.style.setProperty("display", "none");
+  }
+
+  private populateForm() {
+    this.setInputValue("font-ui-family", this.settings.uiFamily);
+    this.setInputValue("font-ui-size", this.settings.uiSize.toString());
+    this.setInputValue("font-editor-family", this.settings.editorFamily);
+    this.setInputValue("font-editor-size", this.settings.editorSize.toString());
+    this.setInputValue("font-data-family", this.settings.dataFamily);
+    this.setInputValue("font-data-size", this.settings.dataSize.toString());
+  }
+
+  private readForm() {
+    return this.normalizeSettings({
+      uiFamily: this.getInput("font-ui-family")?.value ?? this.settings.uiFamily,
+      uiSize: Number(this.getInput("font-ui-size")?.value),
+      editorFamily: this.getInput("font-editor-family")?.value ?? this.settings.editorFamily,
+      editorSize: Number(this.getInput("font-editor-size")?.value),
+      dataFamily: this.getInput("font-data-family")?.value ?? this.settings.dataFamily,
+      dataSize: Number(this.getInput("font-data-size")?.value),
+    });
+  }
+
+  private apply() {
+    const root = this.doc.documentElement.style;
+    root.setProperty("--font-ui-family", this.toFontStack(this.settings.uiFamily, "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"));
+    root.setProperty("--font-editor-family", this.toFontStack(this.settings.editorFamily, "Consolas, monospace"));
+    root.setProperty("--font-data-family", this.toFontStack(this.settings.dataFamily, "Consolas, monospace"));
+    root.setProperty("--font-ui-size", `${this.settings.uiSize}px`);
+    root.setProperty("--font-editor-size", `${this.settings.editorSize}px`);
+    root.setProperty("--font-data-size", `${this.settings.dataSize}px`);
+  }
+
+  private loadSettings() {
+    try {
+      const stored = localStorage.getItem(AppFontManager.STORAGE_KEY);
+      if (!stored) return { ...AppFontManager.DEFAULT_SETTINGS };
+      return this.normalizeSettings({ ...AppFontManager.DEFAULT_SETTINGS, ...JSON.parse(stored) });
+    } catch {
+      return { ...AppFontManager.DEFAULT_SETTINGS };
+    }
+  }
+
+  private saveSettings() {
+    try {
+      localStorage.setItem(AppFontManager.STORAGE_KEY, JSON.stringify(this.settings));
+    } catch {
+      // Storage can be unavailable in restricted webviews or test environments.
+    }
+  }
+
+  private normalizeSettings(settings: FontSettings) {
+    return {
+      uiFamily: this.cleanFamily(settings.uiFamily) || AppFontManager.DEFAULT_SETTINGS.uiFamily,
+      uiSize: this.clampSize(settings.uiSize, 10, 24, AppFontManager.DEFAULT_SETTINGS.uiSize),
+      editorFamily: this.cleanFamily(settings.editorFamily) || AppFontManager.DEFAULT_SETTINGS.editorFamily,
+      editorSize: this.clampSize(settings.editorSize, 10, 32, AppFontManager.DEFAULT_SETTINGS.editorSize),
+      dataFamily: this.cleanFamily(settings.dataFamily) || AppFontManager.DEFAULT_SETTINGS.dataFamily,
+      dataSize: this.clampSize(settings.dataSize, 10, 28, AppFontManager.DEFAULT_SETTINGS.dataSize),
+    };
+  }
+
+  private clampSize(value: unknown, min: number, max: number, fallback: number) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(numericValue)));
+  }
+
+  private cleanFamily(value: unknown) {
+    return String(value ?? "").replace(/[;{}]/g, "").trim();
+  }
+
+  private toFontStack(family: string, fallback: string) {
+    const cleaned = this.cleanFamily(family);
+    if (!cleaned) return fallback;
+    if (cleaned.includes(",")) return cleaned;
+    const primary = /[^a-zA-Z0-9_-]/.test(cleaned) ? `"${cleaned.replace(/"/g, "")}"` : cleaned;
+    return `${primary}, ${fallback}`;
+  }
+
+  private getModal() {
+    return this.doc.getElementById("font-settings-modal") as HTMLElement | null;
+  }
+
+  private getInput(id: string) {
+    return this.doc.getElementById(id) as HTMLInputElement | null;
+  }
+
+  private setInputValue(id: string, value: string) {
+    const input = this.getInput(id);
+    if (input) input.value = value;
+  }
+}
+
 // --- History Management ---
 interface HistoryEntry {
   id: string;
@@ -1300,6 +1505,7 @@ class TreeView {
 
 // --- App Initialization ---
 window.addEventListener("DOMContentLoaded", () => {
+  AppFontManager.getInstance().init();
   AppZoomManager.getInstance().init();
 
   const tabManager = new TabManager();
@@ -1345,6 +1551,10 @@ window.addEventListener("DOMContentLoaded", () => {
       modal.style.display = "block";
       (document.querySelector("#db-host") as HTMLInputElement)?.focus();
     }
+  });
+
+  listen("menu-font-settings", () => {
+    AppFontManager.getInstance().show();
   });
 
   listen("menu-new-query", () => {

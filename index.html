@@ -166,6 +166,72 @@
       </div>
     </div>
 
+    <!-- Font Settings Modal -->
+    <div id="font-settings-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 style="font-size: 14px; margin: 0;">Font Settings</h2>
+          <button type="button" class="close-icon" id="font-settings-close-icon" style="background: none; border: none; color: var(--text-muted); cursor: pointer;">&times;</button>
+        </div>
+
+        <form id="font-settings-form">
+          <div class="modal-body">
+            <datalist id="font-family-options">
+              <option value="Inter"></option>
+              <option value="Segoe UI"></option>
+              <option value="Arial"></option>
+              <option value="Cascadia Code"></option>
+              <option value="JetBrains Mono"></option>
+              <option value="Fira Code"></option>
+              <option value="Consolas"></option>
+            </datalist>
+
+            <div class="font-grid">
+              <div class="form-group">
+                <label>Interface and menus</label>
+                <input id="font-ui-family" type="text" list="font-family-options" />
+              </div>
+              <div class="form-group">
+                <label>Size</label>
+                <input id="font-ui-size" type="number" min="10" max="24" step="1" />
+              </div>
+            </div>
+            <div class="font-preview">Object Explorer / Query Toolbar / Context Menu</div>
+
+            <div class="font-grid" style="margin-top: 16px;">
+              <div class="form-group">
+                <label>SQL editor</label>
+                <input id="font-editor-family" type="text" list="font-family-options" />
+              </div>
+              <div class="form-group">
+                <label>Size</label>
+                <input id="font-editor-size" type="number" min="10" max="32" step="1" />
+              </div>
+            </div>
+            <div class="font-preview editor">SELECT id, name FROM public.users;</div>
+
+            <div class="font-grid" style="margin-top: 16px;">
+              <div class="form-group">
+                <label>Results and history</label>
+                <input id="font-data-family" type="text" list="font-family-options" />
+              </div>
+              <div class="form-group">
+                <label>Size</label>
+                <input id="font-data-size" type="number" min="10" max="28" step="1" />
+              </div>
+            </div>
+            <div class="font-preview data">id | total | created_at</div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="font-settings-reset">Reset</button>
+            <button type="button" class="btn btn-secondary" id="font-settings-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <template id="history-template">
       <div class="history-view">
         <div class="history-toolbar">
