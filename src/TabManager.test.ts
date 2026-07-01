@@ -124,4 +124,52 @@ describe("TabManager", () => {
       dataSize: 16,
     });
   });
+  test("populates selectable font dropdowns and applies chosen families", () => {
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => {
+        let currentFont = "";
+        return {
+          get font() {
+            return currentFont;
+          },
+          set font(value: string) {
+            currentFont = value;
+          },
+          measureText: () => ({
+            width: currentFont.includes("Consolas") || currentFont.includes("Segoe UI") ? 140 : 100,
+          }),
+        };
+      },
+    });
+
+    document.body.insertAdjacentHTML("beforeend", `
+      <div id="font-settings-modal">
+        <form id="font-settings-form">
+          <select id="font-ui-family"></select>
+          <input id="font-ui-size" type="number" />
+          <select id="font-editor-family"></select>
+          <input id="font-editor-size" type="number" />
+          <select id="font-data-family"></select>
+          <input id="font-data-size" type="number" />
+          <button type="button" id="font-settings-reset">Reset</button>
+          <button type="button" id="font-settings-cancel">Cancel</button>
+          <button type="button" id="font-settings-close-icon">Close</button>
+        </form>
+      </div>
+    `);
+
+    const fontManager = new AppFontManager();
+    fontManager.init();
+    fontManager.show();
+
+    const uiSelect = document.getElementById("font-ui-family") as HTMLSelectElement;
+    expect(uiSelect.tagName).toBe("SELECT");
+    expect(Array.from(uiSelect.options).map((option) => option.value)).toContain("Consolas");
+
+    uiSelect.value = "Consolas";
+    uiSelect.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(document.documentElement.style.getPropertyValue("--font-ui-family")).toContain("Consolas");
+  });
 });

@@ -118,6 +118,25 @@ export interface FontSettings {
 export class AppFontManager {
   private static instance: AppFontManager;
   private static readonly STORAGE_KEY = "zedisql_font_settings";
+  private static readonly FONT_CHOICES = [
+    "Inter",
+    "Segoe UI",
+    "Arial",
+    "Calibri",
+    "Cambria",
+    "Candara",
+    "Verdana",
+    "Tahoma",
+    "Trebuchet MS",
+    "Georgia",
+    "Times New Roman",
+    "Cascadia Code",
+    "Cascadia Mono",
+    "JetBrains Mono",
+    "Fira Code",
+    "Consolas",
+    "Courier New",
+  ];
   private static readonly DEFAULT_SETTINGS: FontSettings = {
     uiFamily: "Inter",
     uiSize: 13,
@@ -144,6 +163,7 @@ export class AppFontManager {
 
   init() {
     this.apply();
+    this.populateFontChoices();
     this.bindModal();
     if (this.initialized) return;
     this.doc.addEventListener("keydown", this.handleKeyDown);
@@ -152,9 +172,10 @@ export class AppFontManager {
 
   show() {
     this.savedSettings = { ...this.settings };
+    this.populateFontChoices();
     this.populateForm();
     this.getModal()?.style.setProperty("display", "block");
-    this.getInput("font-ui-family")?.focus();
+    this.getControl("font-ui-family")?.focus();
   }
 
   getSettings() {
@@ -230,12 +251,35 @@ export class AppFontManager {
 
   private readForm() {
     return this.normalizeSettings({
-      uiFamily: this.getInput("font-ui-family")?.value ?? this.settings.uiFamily,
+      uiFamily: this.getControl("font-ui-family")?.value ?? this.settings.uiFamily,
       uiSize: Number(this.getInput("font-ui-size")?.value),
-      editorFamily: this.getInput("font-editor-family")?.value ?? this.settings.editorFamily,
+      editorFamily: this.getControl("font-editor-family")?.value ?? this.settings.editorFamily,
       editorSize: Number(this.getInput("font-editor-size")?.value),
-      dataFamily: this.getInput("font-data-family")?.value ?? this.settings.dataFamily,
+      dataFamily: this.getControl("font-data-family")?.value ?? this.settings.dataFamily,
       dataSize: Number(this.getInput("font-data-size")?.value),
+    });
+  }
+
+  private populateFontChoices() {
+    this.populateFontSelect("font-ui-family", this.settings.uiFamily);
+    this.populateFontSelect("font-editor-family", this.settings.editorFamily);
+    this.populateFontSelect("font-data-family", this.settings.dataFamily);
+  }
+
+  private populateFontSelect(id: string, selectedFamily: string) {
+    const select = this.doc.getElementById(id) as HTMLSelectElement | null;
+    if (!select) return;
+
+    const families = AppFontManager.FONT_CHOICES.filter((family) => this.isFontAvailable(family));
+    const uniqueFamilies = Array.from(new Set([selectedFamily, ...families]));
+
+    select.innerHTML = "";
+    uniqueFamilies.forEach((family) => {
+      const option = this.doc.createElement("option");
+      option.value = family;
+      option.textContent = family;
+      option.style.fontFamily = this.toFontStack(family, "sans-serif");
+      select.appendChild(option);
     });
   }
 
@@ -296,6 +340,25 @@ export class AppFontManager {
     return `${primary}, ${fallback}`;
   }
 
+  private isFontAvailable(family: string) {
+    if (family === "Inter" || family === "JetBrains Mono" || family === "Fira Code") {
+      return true;
+    }
+
+    const canvas = this.doc.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return true;
+
+    const text = "mmmmmmmmmmlli";
+    const baselineFonts = ["monospace", "serif", "sans-serif"];
+    return baselineFonts.some((baselineFont) => {
+      context.font = `72px ${baselineFont}`;
+      const baselineWidth = context.measureText(text).width;
+      context.font = `72px ${this.toFontStack(family, baselineFont)}`;
+      return context.measureText(text).width !== baselineWidth;
+    });
+  }
+
   private getModal() {
     return this.doc.getElementById("font-settings-modal") as HTMLElement | null;
   }
@@ -304,8 +367,12 @@ export class AppFontManager {
     return this.doc.getElementById(id) as HTMLInputElement | null;
   }
 
+  private getControl(id: string) {
+    return this.doc.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+  }
+
   private setInputValue(id: string, value: string) {
-    const input = this.getInput(id);
+    const input = this.getControl(id);
     if (input) input.value = value;
   }
 }
@@ -1237,7 +1304,7 @@ class TreeView {
     node.innerHTML = `
       <span class="tree-node-icon">${icon}</span>
       <span>${label}</span>
-      ${isCollapsible ? '<span style="margin-left: auto; font-size: 8px; opacity: 0.5;">▼</span>' : ''}
+      ${isCollapsible ? '<span style="margin-left: auto; font-size: 8px; opacity: 0.5;">&#9662;</span>' : ''}
       ${isActive ? '<span class="connected-indicator" title="Connected"></span>' : ''}
     `;
 

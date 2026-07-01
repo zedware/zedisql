@@ -378,9 +378,7 @@ pub fn run() {
             )?;
 
             if let Some(ref fm) = file_menu {
-                let _ = fm.append(&connect_i);
-                let _ = fm.append(&save_i);
-                let _ = fm.append(&font_settings_i);
+                let _ = fm.insert_items(&[&connect_i, &save_i, &font_settings_i], 0);
             } else {
                 let fm = Submenu::with_items(
                     handle,
