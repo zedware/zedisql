@@ -1321,8 +1321,11 @@ class TreeView {
 
       // Re-render the whole server tree to update indicators and expansion
       await this.refreshTree();
+      if (statusText) statusText.textContent = `Connected to database ${dbName}.`;
     } catch (err) {
       console.error("Connect failed", err);
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = `Failed to connect to database ${dbName}.`;
       alert("Failed to connect to database: " + err);
     }
   }
