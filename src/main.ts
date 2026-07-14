@@ -14,6 +14,9 @@ interface AppSettings {
   "connection.port": number;
   "connection.username": string;
   "connection.database": string;
+  "ai.openai.api_key": string;
+  "ai.openai.api_url": string;
+  "ai.openai.model": string;
   "history.maxEntries": number;
   "ui.zoom": number;
   "ui.font.family": string;
@@ -29,6 +32,9 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   "connection.port": 5432,
   "connection.username": "postgres",
   "connection.database": "postgres",
+  "ai.openai.api_key": "",
+  "ai.openai.api_url": "https://api.openai.com/v1/chat/completions",
+  "ai.openai.model": "gpt-4.1-mini",
   "history.maxEntries": 100,
   "ui.zoom": 1,
   "ui.font.family": "Inter",
@@ -798,6 +804,18 @@ export class QueryToolInstance {
   private executeBtn: HTMLButtonElement;
   private cancelBtn: HTMLButtonElement;
   private saveBtn: HTMLButtonElement;
+  private aiPanel: HTMLElement | null;
+  private aiMessageList: HTMLElement | null;
+  private aiPromptForm: HTMLFormElement | null;
+  private aiPromptInput: HTMLTextAreaElement | null;
+  private aiSendBtn: HTMLButtonElement | null;
+  private aiInlineWidget: HTMLElement | null;
+  private aiInlineForm: HTMLFormElement | null;
+  private aiInlineInput: HTMLTextAreaElement | null;
+  private aiInlineSuggestion: HTMLElement | null;
+  private aiInlinePreview: HTMLElement | null;
+  private pendingInlineSql: string | null = null;
+  private inlineRange: { start: number; end: number } | null = null;
   private resultsHead: HTMLElement;
   private resultsBody: HTMLElement;
   private resultsContainer: HTMLElement;
@@ -811,6 +829,16 @@ export class QueryToolInstance {
     this.executeBtn = container.querySelector(".btn-execute") as HTMLButtonElement;
     this.cancelBtn = container.querySelector(".btn-cancel") as HTMLButtonElement;
     this.saveBtn = container.querySelector(".btn-save") as HTMLButtonElement;
+    this.aiPanel = container.querySelector(".ai-assistant-panel");
+    this.aiMessageList = container.querySelector(".ai-message-list");
+    this.aiPromptForm = container.querySelector(".ai-prompt-form") as HTMLFormElement | null;
+    this.aiPromptInput = container.querySelector(".ai-prompt-input") as HTMLTextAreaElement | null;
+    this.aiSendBtn = container.querySelector(".ai-send-btn") as HTMLButtonElement | null;
+    this.aiInlineWidget = container.querySelector(".ai-inline-widget");
+    this.aiInlineForm = container.querySelector(".ai-inline-form") as HTMLFormElement | null;
+    this.aiInlineInput = container.querySelector(".ai-inline-input") as HTMLTextAreaElement | null;
+    this.aiInlineSuggestion = container.querySelector(".ai-inline-suggestion");
+    this.aiInlinePreview = container.querySelector(".ai-inline-preview code");
     this.resultsHead = container.querySelector(".results-head") as HTMLElement;
     this.resultsBody = container.querySelector(".results-body") as HTMLElement;
     this.resultsContainer = container.querySelector(".results-container") as HTMLElement;
@@ -826,6 +854,8 @@ export class QueryToolInstance {
     this.executeBtn.addEventListener("click", () => this.execute());
     this.cancelBtn.addEventListener("click", () => this.cancel());
     this.saveBtn.addEventListener("click", () => this.save());
+    this.initAiAssistant();
+    this.initInlineAiAssistant();
 
     // Setup Syntax Highlighting Sync
     this.editor.addEventListener("input", () => this.syncHighlight());
@@ -844,6 +874,30 @@ export class QueryToolInstance {
 
     // Handle Ctrl+Enter / Cmd+Enter execution
     this.editor.addEventListener("keydown", (e) => {
+      if (e.altKey && (e.code === "Slash" || e.key === "/")) {
+        e.preventDefault();
+        this.showInlineAiPrompt();
+        return;
+      }
+
+      if (e.altKey && (e.code === "Period" || e.key === ".")) {
+        e.preventDefault();
+        void this.generateInlineSqlFromCurrentComment();
+        return;
+      }
+
+      if (e.key === "Tab" && this.pendingInlineSql) {
+        e.preventDefault();
+        this.acceptInlineSuggestion();
+        return;
+      }
+
+      if (e.key === "Escape" && (this.pendingInlineSql || !this.aiInlineWidget?.hidden)) {
+        e.preventDefault();
+        this.rejectInlineSuggestion();
+        return;
+      }
+
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         this.execute();
@@ -856,6 +910,267 @@ export class QueryToolInstance {
     this.syncHighlight();
     if (autoExecute) {
       this.execute();
+    }
+  }
+
+  private initAiAssistant() {
+    if (!this.aiPanel || !this.aiPromptForm || !this.aiPromptInput) return;
+
+    this.renderAiWelcome();
+    this.aiPromptForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void this.generateSqlFromPrompt();
+    });
+
+    this.aiPromptInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        void this.generateSqlFromPrompt();
+      }
+    });
+  }
+
+  private initInlineAiAssistant() {
+    if (!this.aiInlineForm || !this.aiInlineInput) return;
+
+    this.aiInlineForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void this.generateInlineSqlSuggestion();
+    });
+
+    this.aiInlineInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.rejectInlineSuggestion();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        void this.generateInlineSqlSuggestion();
+      }
+    });
+  }
+
+  private showInlineAiPrompt(initialPrompt: string = "") {
+    if (!this.aiInlineWidget || !this.aiInlineInput) return;
+
+    this.inlineRange = {
+      start: this.editor.selectionStart ?? this.editor.value.length,
+      end: this.editor.selectionEnd ?? this.editor.selectionStart ?? this.editor.value.length,
+    };
+    this.pendingInlineSql = null;
+    this.hideInlineSuggestion();
+    this.aiInlineWidget.hidden = false;
+    this.aiInlineInput.value = initialPrompt;
+    this.aiInlineInput.focus();
+  }
+
+  private async generateInlineSqlSuggestion() {
+    if (!this.aiInlineInput) return;
+    const prompt = this.aiInlineInput.value.trim();
+    await this.requestInlineSqlSuggestion(prompt);
+  }
+
+  private async generateInlineSqlFromCurrentComment() {
+    const prompt = this.getCurrentCommentPrompt();
+    if (!prompt) {
+      this.showInlineAiPrompt();
+      return;
+    }
+
+    const cursor = this.editor.selectionStart ?? this.editor.value.length;
+    this.inlineRange = { start: cursor, end: cursor };
+    await this.requestInlineSqlSuggestion(prompt);
+  }
+
+  private async requestInlineSqlSuggestion(prompt: string) {
+    if (!prompt) return;
+
+    this.setInlineAiBusy(true);
+    try {
+      const response = await invoke<{ sql: string; explanation?: string }>("generate_sql_with_ai", {
+        prompt,
+        currentQuery: this.editor.value,
+        settings: appSettings,
+      });
+      this.pendingInlineSql = response.sql;
+      this.renderInlineSuggestion(response.sql);
+      this.aiInlineWidget?.setAttribute("hidden", "");
+      this.editor.focus();
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = "AI suggestion ready. Press Tab to accept or Esc to discard.";
+    } catch (error) {
+      const message = typeof error === "string" ? error : JSON.stringify(error);
+      this.pendingInlineSql = null;
+      this.renderInlineSuggestion(`AI Error: ${message}`);
+    } finally {
+      this.setInlineAiBusy(false);
+    }
+  }
+
+  private getCurrentCommentPrompt() {
+    const cursor = this.editor.selectionStart ?? this.editor.value.length;
+    const beforeCursor = this.editor.value.slice(0, cursor);
+    const lineStart = beforeCursor.lastIndexOf("\n") + 1;
+    const lineEndIndex = this.editor.value.indexOf("\n", cursor);
+    const lineEnd = lineEndIndex === -1 ? this.editor.value.length : lineEndIndex;
+    const currentLine = this.editor.value.slice(lineStart, lineEnd).trim();
+
+    return currentLine
+      .replace(/^--\s?/, "")
+      .replace(/^\/\*\s?/, "")
+      .replace(/\s?\*\/$/, "")
+      .trim();
+  }
+
+  private renderInlineSuggestion(sql: string) {
+    if (!this.aiInlineSuggestion || !this.aiInlinePreview) return;
+    this.aiInlinePreview.textContent = sql;
+    this.aiInlineSuggestion.hidden = false;
+  }
+
+  private acceptInlineSuggestion() {
+    if (!this.pendingInlineSql) return;
+    const range = this.inlineRange ?? {
+      start: this.editor.selectionStart ?? this.editor.value.length,
+      end: this.editor.selectionEnd ?? this.editor.selectionStart ?? this.editor.value.length,
+    };
+    this.insertSqlAtRange(this.pendingInlineSql, range.start, range.end);
+    this.pendingInlineSql = null;
+    this.inlineRange = null;
+    this.hideInlineSuggestion();
+  }
+
+  private rejectInlineSuggestion() {
+    this.pendingInlineSql = null;
+    this.inlineRange = null;
+    this.hideInlineSuggestion();
+    if (this.aiInlineWidget) this.aiInlineWidget.hidden = true;
+    this.editor.focus();
+  }
+
+  private hideInlineSuggestion() {
+    if (this.aiInlineSuggestion) this.aiInlineSuggestion.hidden = true;
+    if (this.aiInlinePreview) this.aiInlinePreview.textContent = "";
+  }
+
+  private renderAiWelcome() {
+    if (!this.aiMessageList) return;
+    this.aiMessageList.innerHTML = `
+      <div class="ai-empty-state">
+        Ask for SQL in plain English. Generated SQL can be inserted, replaced, or copied before you run it.
+      </div>
+    `;
+  }
+
+  private async generateSqlFromPrompt() {
+    if (!this.aiPromptInput || !this.aiMessageList) return;
+    const prompt = this.aiPromptInput.value.trim();
+    if (!prompt) return;
+
+    this.aiPromptInput.value = "";
+    this.appendAiMessage("user", prompt);
+    this.setAiBusy(true);
+
+    try {
+      const response = await invoke<{ sql: string; explanation?: string }>("generate_sql_with_ai", {
+        prompt,
+        currentQuery: this.editor.value,
+        settings: appSettings,
+      });
+      this.appendAiSqlMessage(response.sql, response.explanation);
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = "AI generated SQL. Review it before execution.";
+    } catch (error) {
+      const message = typeof error === "string" ? error : JSON.stringify(error);
+      this.appendAiMessage("assistant error", message || "AI request failed.");
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = `AI Error: ${message}`;
+    } finally {
+      this.setAiBusy(false);
+    }
+  }
+
+  private appendAiMessage(role: "user" | "assistant" | "assistant error", content: string) {
+    if (!this.aiMessageList) return;
+    this.clearAiEmptyState();
+    const message = document.createElement("div");
+    message.className = `ai-message ${role.replace(" ", "-")}`;
+    message.innerHTML = `
+      <div class="ai-message-role">${role === "user" ? "You" : "AI Assistant"}</div>
+      <div class="ai-message-content">${escapeHtml(content)}</div>
+    `;
+    this.aiMessageList.appendChild(message);
+    this.aiMessageList.scrollTop = this.aiMessageList.scrollHeight;
+  }
+
+  private appendAiSqlMessage(sql: string, explanation?: string) {
+    if (!this.aiMessageList) return;
+    this.clearAiEmptyState();
+    const message = document.createElement("div");
+    message.className = "ai-message assistant";
+    message.innerHTML = `
+      <div class="ai-message-role">AI Assistant</div>
+      ${explanation ? `<div class="ai-message-content">${escapeHtml(explanation)}</div>` : ""}
+      <pre class="ai-sql-block"><code>${escapeHtml(sql)}</code></pre>
+      <div class="ai-sql-actions">
+        <button type="button" class="ai-action-btn" data-action="replace">Replace</button>
+        <button type="button" class="ai-action-btn" data-action="insert">Insert</button>
+        <button type="button" class="ai-action-btn" data-action="copy">Copy</button>
+      </div>
+    `;
+
+    message.querySelector('[data-action="replace"]')?.addEventListener("click", () => {
+      this.setQuery(sql);
+    });
+    message.querySelector('[data-action="insert"]')?.addEventListener("click", () => {
+      this.insertSqlAtCursor(sql);
+    });
+    message.querySelector('[data-action="copy"]')?.addEventListener("click", () => {
+      void navigator.clipboard?.writeText(sql);
+      const statusText = document.querySelector("#status-text");
+      if (statusText) statusText.textContent = "Generated SQL copied to clipboard.";
+    });
+
+    this.aiMessageList.appendChild(message);
+    this.aiMessageList.scrollTop = this.aiMessageList.scrollHeight;
+  }
+
+  private insertSqlAtCursor(sql: string) {
+    const start = this.editor.selectionStart ?? this.editor.value.length;
+    const end = this.editor.selectionEnd ?? start;
+    this.insertSqlAtRange(sql, start, end);
+  }
+
+  private insertSqlAtRange(sql: string, start: number, end: number) {
+    this.editor.value = `${this.editor.value.slice(0, start)}${sql}${this.editor.value.slice(end)}`;
+    const nextPosition = start + sql.length;
+    this.editor.selectionStart = nextPosition;
+    this.editor.selectionEnd = nextPosition;
+    this.editor.focus();
+    this.syncHighlight();
+  }
+
+  private clearAiEmptyState() {
+    this.aiMessageList?.querySelector(".ai-empty-state")?.remove();
+  }
+
+  private setAiBusy(isBusy: boolean) {
+    if (this.aiSendBtn) {
+      this.aiSendBtn.disabled = isBusy;
+      this.aiSendBtn.textContent = isBusy ? "Generating..." : "Send";
+    }
+    if (this.aiPromptInput) {
+      this.aiPromptInput.disabled = isBusy;
+    }
+  }
+
+  private setInlineAiBusy(isBusy: boolean) {
+    const button = this.aiInlineForm?.querySelector(".ai-inline-send") as HTMLButtonElement | null;
+    if (button) {
+      button.disabled = isBusy;
+      button.textContent = isBusy ? "Generating..." : "Send";
+    }
+    if (this.aiInlineInput) {
+      this.aiInlineInput.disabled = isBusy;
     }
   }
 

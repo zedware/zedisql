@@ -93,9 +93,34 @@
               Save
             </button>
           </div>
-          <div class="editor-container">
-            <pre class="sql-highlighter" aria-hidden="true"><code class="sql-code"></code></pre>
-            <textarea class="sql-editor" spellcheck="false" readonly placeholder="Connect to a server to start writing SQL..."></textarea>
+          <div class="query-workspace">
+            <div class="editor-container">
+              <pre class="sql-highlighter" aria-hidden="true"><code class="sql-code"></code></pre>
+              <textarea class="sql-editor" spellcheck="false" readonly placeholder="Connect to a server to start writing SQL..."></textarea>
+              <div class="ai-inline-widget" hidden>
+                <form class="ai-inline-form">
+                  <textarea class="ai-inline-input" rows="2" placeholder="Ask Copilot-style SQL help..." spellcheck="true"></textarea>
+                  <button class="ai-inline-send" type="submit">Send</button>
+                </form>
+              </div>
+              <div class="ai-inline-suggestion" hidden>
+                <div class="ai-inline-suggestion-header">
+                  <span>AI suggestion</span>
+                  <span>Tab accept · Esc discard</span>
+                </div>
+                <pre class="ai-inline-preview"><code></code></pre>
+              </div>
+            </div>
+            <aside class="ai-assistant-panel" aria-label="AI Assistant">
+              <div class="ai-panel-header">
+                <span>AI Assistant</span>
+              </div>
+              <div class="ai-message-list"></div>
+              <form class="ai-prompt-form">
+                <textarea class="ai-prompt-input" rows="3" placeholder="Describe the SQL you need..." spellcheck="true"></textarea>
+                <button class="tool-btn ai-send-btn" type="submit">Send</button>
+              </form>
+            </aside>
           </div>
           <div class="results-container">
             <table class="data-table">

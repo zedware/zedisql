@@ -1,9 +1,36 @@
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test, beforeEach, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { AppFontManager, AppZoomManager, groupConsecutiveHistoryEntries, TabManager } from "./main";
 
 describe("TabManager", () => {
   beforeEach(() => {
     localStorage.clear();
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "get_catalogs") {
+        return Promise.resolve(["mockDB", "postgres", "testdb"]);
+      }
+      if (cmd === "execute_query") {
+        return Promise.resolve({
+          columns: ["mock_col"],
+          rows: [["1"], ["2"]],
+          rows_affected: 0,
+          command_tag: "SELECT"
+        });
+      }
+      if (cmd === "cancel_query") {
+        return Promise.resolve();
+      }
+      if (cmd === "get_dashboard_stats") {
+        return Promise.resolve({
+          active_sessions: 1,
+          idle_sessions: 2,
+          total_xacts: 100,
+        });
+      }
+      return Promise.resolve();
+    });
 
     // Inject neutral graphical binding locations.
     document.body.innerHTML = `
@@ -21,7 +48,23 @@ describe("TabManager", () => {
           <div class="editor-container">
             <pre class="sql-highlighter"><code class="sql-code"></code></pre>
             <textarea class="sql-editor" spellcheck="false" readonly></textarea>
+            <div class="ai-inline-widget" hidden>
+              <form class="ai-inline-form">
+                <textarea class="ai-inline-input"></textarea>
+                <button class="ai-inline-send" type="submit">Send</button>
+              </form>
+            </div>
+            <div class="ai-inline-suggestion" hidden>
+              <pre class="ai-inline-preview"><code></code></pre>
+            </div>
           </div>
+          <aside class="ai-assistant-panel">
+            <div class="ai-message-list"></div>
+            <form class="ai-prompt-form">
+              <textarea class="ai-prompt-input"></textarea>
+              <button class="ai-send-btn" type="submit">Send</button>
+            </form>
+          </aside>
           <div class="results-container">
             <table class="data-table">
               <thead><tr class="results-head"></tr></thead>
@@ -61,6 +104,190 @@ describe("TabManager", () => {
     expect(viewContainer.querySelector(".sql-editor")).not.toBeNull();
     // Test the generated syntax highlighter container injected earlier successfully survived component duplication
     expect(viewContainer.querySelector(".sql-highlighter")).not.toBeNull();
+  });
+
+  test("creates an AI Assistant panel inside each query tool", () => {
+    const manager = new TabManager();
+    manager.addQueryTool();
+
+    const panel = document.querySelector(".ai-assistant-panel");
+
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelector(".ai-message-list")).not.toBeNull();
+    expect(panel?.querySelector(".ai-prompt-input")).not.toBeNull();
+    expect(panel?.querySelector(".ai-send-btn")).not.toBeNull();
+  });
+
+  test("AI Assistant inserts, replaces, and copies generated SQL without executing it", async () => {
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "generate_sql_with_ai") {
+        return Promise.resolve({
+          sql: "SELECT id, name FROM public.users;",
+          explanation: "Lists users.",
+        });
+      }
+      return Promise.resolve();
+    });
+    const writeText = vi.fn();
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+
+    const manager = new TabManager();
+    manager.addQueryTool("SELECT count(*) FROM public.users;");
+
+    const promptInput = document.querySelector(".ai-prompt-input") as HTMLTextAreaElement;
+    const promptForm = document.querySelector(".ai-prompt-form") as HTMLFormElement;
+    const editor = document.querySelector(".sql-editor") as HTMLTextAreaElement;
+
+    promptInput.value = "show users";
+    promptForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("generate_sql_with_ai", expect.objectContaining({
+      prompt: "show users",
+      currentQuery: "SELECT count(*) FROM public.users;",
+    }));
+
+    document.querySelector<HTMLButtonElement>('[data-action="replace"]')?.click();
+    expect(editor.value).toBe("SELECT id, name FROM public.users;");
+
+    editor.value = "SELECT 1;";
+    editor.selectionStart = editor.selectionEnd = editor.value.length;
+    document.querySelector<HTMLButtonElement>('[data-action="insert"]')?.click();
+    expect(editor.value).toBe("SELECT 1;SELECT id, name FROM public.users;");
+
+    document.querySelector<HTMLButtonElement>('[data-action="copy"]')?.click();
+    expect(writeText).toHaveBeenCalledWith("SELECT id, name FROM public.users;");
+    expect(invokeMock).not.toHaveBeenCalledWith("execute_query", expect.anything());
+  });
+
+  test("opens inline AI chat from the SQL editor and accepts the generated SQL with Tab", async () => {
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "generate_sql_with_ai") {
+        return Promise.resolve({
+          sql: "SELECT * FROM public.orders LIMIT 20;",
+          explanation: "Shows recent orders.",
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const manager = new TabManager();
+    manager.addQueryTool("SELECT 1;");
+
+    const editor = document.querySelector(".sql-editor") as HTMLTextAreaElement;
+    editor.selectionStart = editor.selectionEnd = editor.value.length;
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "/",
+      code: "Slash",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    const inlinePrompt = document.querySelector(".ai-inline-widget") as HTMLElement;
+    const inlineInput = document.querySelector(".ai-inline-input") as HTMLTextAreaElement;
+    const inlineForm = document.querySelector(".ai-inline-form") as HTMLFormElement;
+
+    expect(inlinePrompt.hidden).toBe(false);
+
+    inlineInput.value = "show recent orders";
+    inlineForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const suggestion = document.querySelector(".ai-inline-suggestion") as HTMLElement;
+    expect(suggestion.hidden).toBe(false);
+    expect(suggestion.textContent).toContain("SELECT * FROM public.orders LIMIT 20;");
+
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(editor.value).toBe("SELECT 1;SELECT * FROM public.orders LIMIT 20;");
+    expect(suggestion.hidden).toBe(true);
+  });
+
+  test("rejects an inline AI suggestion with Escape", async () => {
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "generate_sql_with_ai") {
+        return Promise.resolve({
+          sql: "SELECT now();",
+          explanation: "Shows server time.",
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const manager = new TabManager();
+    manager.addQueryTool("SELECT 1;");
+
+    const editor = document.querySelector(".sql-editor") as HTMLTextAreaElement;
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "/",
+      code: "Slash",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    const inlineInput = document.querySelector(".ai-inline-input") as HTMLTextAreaElement;
+    const inlineForm = document.querySelector(".ai-inline-form") as HTMLFormElement;
+    inlineInput.value = "server time";
+    inlineForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const suggestion = document.querySelector(".ai-inline-suggestion") as HTMLElement;
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    expect(editor.value).toBe("SELECT 1;");
+    expect(suggestion.hidden).toBe(true);
+  });
+
+  test("uses the current SQL comment as a manual inline completion prompt", async () => {
+    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "generate_sql_with_ai") {
+        return Promise.resolve({
+          sql: "SELECT table_schema, table_name FROM information_schema.tables;",
+          explanation: "Lists tables.",
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const manager = new TabManager();
+    manager.addQueryTool("-- list all tables");
+
+    const editor = document.querySelector(".sql-editor") as HTMLTextAreaElement;
+    editor.selectionStart = editor.selectionEnd = editor.value.length;
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: ".",
+      code: "Period",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("generate_sql_with_ai", expect.objectContaining({
+      prompt: "list all tables",
+      currentQuery: "-- list all tables",
+    }));
+    expect(document.querySelector(".ai-inline-suggestion")?.textContent).toContain("information_schema.tables");
   });
 
   test("supports VS Code-style zoom hotkeys", () => {
