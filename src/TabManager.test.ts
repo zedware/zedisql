@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from "vitest";
-import { AppFontManager, AppZoomManager, TabManager } from "./main";
+import { AppFontManager, AppZoomManager, groupConsecutiveHistoryEntries, TabManager } from "./main";
 
 describe("TabManager", () => {
   beforeEach(() => {
@@ -123,6 +123,25 @@ describe("TabManager", () => {
       dataFamily: "Consolas",
       dataSize: 16,
     });
+  });
+
+  test("groups only consecutive duplicate history entries", () => {
+    const base = { database: "postgres", duration: "1ms", status: "success" as const };
+    const grouped = groupConsecutiveHistoryEntries([
+      { ...base, id: "3", query: "SELECT 1", timestamp: 3 },
+      { ...base, id: "2", query: "SELECT 1", timestamp: 2 },
+      { ...base, id: "1", query: "SELECT 2", timestamp: 1 },
+      { ...base, id: "0", query: "SELECT 1", timestamp: 0 },
+    ]);
+
+    expect(grouped).toHaveLength(3);
+    expect(grouped[0]).toMatchObject({ query: "SELECT 1", repeatCount: 2, firstTimestamp: 2, timestamp: 3 });
+    expect(grouped[0].executions).toEqual([
+      { timestamp: 2, durationMs: 1 },
+      { timestamp: 3, durationMs: 1 },
+    ]);
+    expect(grouped[0].executionStats).toEqual({ count: 2, minMs: 1, maxMs: 1, avgMs: 1 });
+    expect(grouped[2]).toMatchObject({ query: "SELECT 1", repeatCount: 1 });
   });
   test("populates selectable font dropdowns and applies chosen families", () => {
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {

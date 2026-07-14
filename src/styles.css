@@ -903,9 +903,36 @@ select {
   border: 1px solid rgba(250, 82, 82, 0.3);
 }
 
+.history-repeat-count {
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(77, 171, 247, 0.15);
+  border: 1px solid rgba(77, 171, 247, 0.3);
+  color: var(--accent-blue);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .history-item-time {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.history-execution-stats,
+.history-execution-times {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.history-execution-stats {
+  color: var(--accent-blue);
+}
+
+.history-execution-times {
+  max-height: 42px;
+  overflow-y: auto;
+  word-break: break-word;
 }
 
 .history-item-content {

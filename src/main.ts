@@ -419,13 +419,70 @@ export class AppFontManager {
 }
 
 // --- History Management ---
-interface HistoryEntry {
+export interface HistoryEntry {
   id: string;
   query: string;
   timestamp: number;
+  firstTimestamp?: number;
+  repeatCount?: number;
   status: "success" | "error";
   database: string;
   duration: string;
+  executions?: Array<{ timestamp: number; durationMs: number | null }>;
+  executionStats?: { count: number; minMs: number | null; maxMs: number | null; avgMs: number | null };
+}
+
+function parseDurationMs(duration: string) {
+  const match = /^([0-9]+(?:\.[0-9]+)?)ms$/.exec(duration.trim());
+  return match ? Number(match[1]) : null;
+}
+
+function calculateExecutionStats(executions: Array<{ timestamp: number; durationMs: number | null }>) {
+  const timings = executions
+    .map(execution => execution.durationMs)
+    .filter((duration): duration is number => duration !== null && Number.isFinite(duration));
+  if (timings.length === 0) return { count: 0, minMs: null, maxMs: null, avgMs: null };
+  return {
+    count: timings.length,
+    minMs: Math.min(...timings),
+    maxMs: Math.max(...timings),
+    avgMs: timings.reduce((total, duration) => total + duration, 0) / timings.length,
+  };
+}
+
+export function groupConsecutiveHistoryEntries(entries: HistoryEntry[]): HistoryEntry[] {
+  const grouped: HistoryEntry[] = [];
+
+  for (const rawEntry of entries) {
+    const entry = {
+      ...rawEntry,
+      firstTimestamp: rawEntry.firstTimestamp ?? rawEntry.timestamp,
+      repeatCount: Math.max(1, Math.round(Number(rawEntry.repeatCount) || 1)),
+      executions: Array.isArray(rawEntry.executions)
+        ? rawEntry.executions
+        : [{ timestamp: rawEntry.timestamp, durationMs: parseDurationMs(rawEntry.duration) }],
+    };
+    entry.executionStats = calculateExecutionStats(entry.executions);
+    const previous = grouped[grouped.length - 1];
+    const isConsecutiveDuplicate = previous
+      && previous.query.trim() === entry.query.trim()
+      && previous.database === entry.database
+      && previous.status === entry.status;
+
+    if (isConsecutiveDuplicate) {
+      const isNewer = entry.timestamp >= previous.timestamp;
+      previous.repeatCount = (previous.repeatCount ?? 1) + (entry.repeatCount ?? 1);
+      previous.firstTimestamp = Math.min(previous.firstTimestamp ?? previous.timestamp, entry.firstTimestamp);
+      previous.timestamp = Math.max(previous.timestamp, entry.timestamp);
+      if (isNewer) previous.duration = entry.duration;
+      previous.executions = [...entry.executions, ...(previous.executions ?? [])];
+      previous.executionStats = calculateExecutionStats(previous.executions);
+    } else {
+      grouped.push(entry);
+    }
+  }
+
+  return grouped;
 }
 
 let appHistory: HistoryEntry[] = [];
@@ -433,7 +490,10 @@ let appHistory: HistoryEntry[] = [];
 async function loadAppHistory() {
   try {
     const stored = await invoke<unknown>("load_history");
-    appHistory = Array.isArray(stored) ? stored as HistoryEntry[] : [];
+    appHistory = Array.isArray(stored)
+      ? groupConsecutiveHistoryEntries(stored as HistoryEntry[])
+      : [];
+    await invoke("save_history", { history: appHistory });
   } catch (error) {
     console.error("Failed to load history.json", error);
     appHistory = [];
@@ -459,20 +519,39 @@ class HistoryManager {
   }
 
   addEntry(query: string, status: "success" | "error", database: string, duration: string) {
+    const timestamp = Date.now();
     const entry: HistoryEntry = {
-      id: Date.now().toString(),
+      id: timestamp.toString(),
       query,
-      timestamp: Date.now(),
+      timestamp,
+      firstTimestamp: timestamp,
+      repeatCount: 1,
       status,
       database,
-      duration
+      duration,
+      executions: [{ timestamp, durationMs: parseDurationMs(duration) }],
+      executionStats: calculateExecutionStats([{ timestamp, durationMs: parseDurationMs(duration) }]),
     };
-    this.entries.unshift(entry);
+    const latest = this.entries[0];
+    const isConsecutiveDuplicate = latest
+      && latest.query.trim() === query.trim()
+      && latest.database === database
+      && latest.status === status;
+
+    if (isConsecutiveDuplicate) {
+      latest.repeatCount = (latest.repeatCount ?? 1) + 1;
+      latest.timestamp = timestamp;
+      latest.duration = duration;
+      latest.executions = [...(latest.executions ?? []), { timestamp, durationMs: parseDurationMs(duration) }];
+      latest.executionStats = calculateExecutionStats(latest.executions);
+    } else {
+      this.entries.unshift(entry);
+    }
     if (this.entries.length > this.maxEntries) {
       this.entries = this.entries.slice(0, this.maxEntries);
     }
     this.save();
-    return entry;
+    return isConsecutiveDuplicate ? latest : entry;
   }
 
   getEntries() {
@@ -955,12 +1034,23 @@ class HistoryView {
       item.className = "history-item";
 
       const dateStr = new Date(entry.timestamp).toLocaleString();
+      const repeatCount = entry.repeatCount ?? 1;
+      const executions = entry.executions ?? [];
+      const stats = entry.executionStats ?? calculateExecutionStats(executions);
+      const formatMs = (value: number | null) => value === null ? "N/A" : `${Number(value.toFixed(2))}ms`;
+      const individualTimes = executions.map(execution => formatMs(execution.durationMs)).join(", ");
+      const statsText = stats.count > 0
+        ? `min ${formatMs(stats.minMs)} · max ${formatMs(stats.maxMs)} · avg ${formatMs(stats.avgMs)}`
+        : "No timing available";
 
       item.innerHTML = `
         <div class="history-item-header">
           <span class="history-item-status ${entry.status}">${entry.status}</span>
-          <span class="history-item-time">${dateStr} [${entry.database}] - ${entry.duration}</span>
+          ${repeatCount > 1 ? `<span class="history-repeat-count" title="${repeatCount} consecutive executions">&times;${repeatCount}</span>` : ""}
+          <span class="history-item-time">${dateStr} [${entry.database}]</span>
         </div>
+        <div class="history-execution-stats">${statsText}</div>
+        <div class="history-execution-times">Runs: ${individualTimes || "N/A"}</div>
         <div class="history-item-content">${escapeHtml(entry.query)}</div>
         <div class="history-item-actions">
           <button class="history-action-btn" data-action="open">Open in Editor</button>
