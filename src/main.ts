@@ -14,6 +14,7 @@ interface AppSettings {
   "connection.port": number;
   "connection.username": string;
   "connection.database": string;
+  "history.maxEntries": number;
   "ui.zoom": number;
   "ui.font.family": string;
   "ui.font.size": number;
@@ -28,6 +29,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   "connection.port": 5432,
   "connection.username": "postgres",
   "connection.database": "postgres",
+  "history.maxEntries": 100,
   "ui.zoom": 1,
   "ui.font.family": "Inter",
   "ui.font.size": 13,
@@ -426,13 +428,29 @@ interface HistoryEntry {
   duration: string;
 }
 
+let appHistory: HistoryEntry[] = [];
+
+async function loadAppHistory() {
+  try {
+    const stored = await invoke<unknown>("load_history");
+    appHistory = Array.isArray(stored) ? stored as HistoryEntry[] : [];
+  } catch (error) {
+    console.error("Failed to load history.json", error);
+    appHistory = [];
+  }
+}
+
 class HistoryManager {
   private static instance: HistoryManager;
   private entries: HistoryEntry[] = [];
-  private readonly MAX_ENTRIES = 100;
+  private readonly maxEntries: number;
 
   private constructor() {
-    this.load();
+    const configuredLimit = Number(appSettings["history.maxEntries"]);
+    this.maxEntries = Number.isFinite(configuredLimit)
+      ? Math.min(10000, Math.max(1, Math.round(configuredLimit)))
+      : DEFAULT_APP_SETTINGS["history.maxEntries"];
+    this.entries = appHistory.slice(0, this.maxEntries);
   }
 
   static getInstance() {
@@ -450,8 +468,8 @@ class HistoryManager {
       duration
     };
     this.entries.unshift(entry);
-    if (this.entries.length > this.MAX_ENTRIES) {
-      this.entries = this.entries.slice(0, this.MAX_ENTRIES);
+    if (this.entries.length > this.maxEntries) {
+      this.entries = this.entries.slice(0, this.maxEntries);
     }
     this.save();
     return entry;
@@ -471,17 +489,11 @@ class HistoryManager {
     this.save();
   }
 
-  private load() {
-    try {
-      const data = localStorage.getItem("zedisql_history");
-      if (data) this.entries = JSON.parse(data);
-    } catch (err) {
-      console.error("Failed to load history", err);
-    }
-  }
-
   private save() {
-    localStorage.setItem("zedisql_history", JSON.stringify(this.entries));
+    appHistory = [...this.entries];
+    void invoke("save_history", { history: this.entries }).catch((error) => {
+      console.error("Failed to save history.json", error);
+    });
   }
 }
 
@@ -1612,6 +1624,7 @@ class TreeView {
 // --- App Initialization ---
 window.addEventListener("DOMContentLoaded", async () => {
   await loadAppSettings();
+  await loadAppHistory();
   AppFontManager.getInstance().init();
   AppZoomManager.getInstance().init();
 

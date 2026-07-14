@@ -14,6 +14,13 @@ fn settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+fn history_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("history.json"))
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn load_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     let path = settings_path(&app)?;
@@ -31,6 +38,26 @@ fn save_settings(settings: serde_json::Value, app: AppHandle) -> Result<(), Stri
     let directory = path.parent().ok_or("Invalid settings path")?;
     std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let contents = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    std::fs::write(path, format!("{contents}\n")).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn load_history(app: AppHandle) -> Result<serde_json::Value, String> {
+    let path = history_path(&app)?;
+    if !path.exists() {
+        return Ok(serde_json::json!([]));
+    }
+
+    let contents = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&contents).map_err(|error| format!("Invalid history.json: {error}"))
+}
+
+#[tauri::command]
+fn save_history(history: serde_json::Value, app: AppHandle) -> Result<(), String> {
+    let path = history_path(&app)?;
+    let directory = path.parent().ok_or("Invalid history path")?;
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let contents = serde_json::to_string_pretty(&history).map_err(|error| error.to_string())?;
     std::fs::write(path, format!("{contents}\n")).map_err(|error| error.to_string())
 }
 
@@ -455,6 +482,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
+            load_history,
+            save_history,
             connect_db,
             switch_database,
             get_catalogs,
