@@ -9,10 +9,56 @@ function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+interface AppSettings {
+  "connection.host": string;
+  "connection.port": number;
+  "connection.username": string;
+  "connection.database": string;
+  "ui.zoom": number;
+  "ui.font.family": string;
+  "ui.font.size": number;
+  "editor.font.family": string;
+  "editor.font.size": number;
+  "data.font.family": string;
+  "data.font.size": number;
+}
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  "connection.host": "localhost",
+  "connection.port": 5432,
+  "connection.username": "postgres",
+  "connection.database": "postgres",
+  "ui.zoom": 1,
+  "ui.font.family": "Inter",
+  "ui.font.size": 13,
+  "editor.font.family": "JetBrains Mono",
+  "editor.font.size": 14,
+  "data.font.family": "JetBrains Mono",
+  "data.font.size": 13,
+};
+
+let appSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
+
+async function loadAppSettings() {
+  try {
+    const stored = await invoke<Partial<AppSettings>>("load_settings");
+    appSettings = { ...DEFAULT_APP_SETTINGS, ...stored };
+    await invoke("save_settings", { settings: appSettings });
+  } catch (error) {
+    console.error("Failed to load settings.json", error);
+  }
+}
+
+function updateAppSettings(next: Partial<AppSettings>) {
+  appSettings = { ...appSettings, ...next };
+  void invoke("save_settings", { settings: appSettings }).catch((error) => {
+    console.error("Failed to save settings.json", error);
+  });
+}
+
 // --- App Zoom ---
 export class AppZoomManager {
   private static instance: AppZoomManager;
-  private static readonly STORAGE_KEY = "zedisql_app_zoom";
   private readonly minZoom = 0.8;
   private readonly maxZoom = 1.6;
   private readonly step = 0.1;
@@ -21,7 +67,7 @@ export class AppZoomManager {
   private readonly handleKeyDown = (e: KeyboardEvent) => this.onKeyDown(e);
 
   constructor(private readonly doc: Document = document) {
-    this.zoom = this.loadZoom();
+    this.zoom = this.normalizeZoom(appSettings["ui.zoom"]);
   }
 
   static getInstance() {
@@ -83,25 +129,15 @@ export class AppZoomManager {
     this.doc.body.style.setProperty("zoom", this.zoom.toString());
   }
 
-  private loadZoom() {
-    try {
-      const stored = localStorage.getItem(AppZoomManager.STORAGE_KEY);
-      if (!stored) return 1;
-      const parsed = Number(stored);
-      return Number.isFinite(parsed)
-        ? Math.min(this.maxZoom, Math.max(this.minZoom, parsed))
-        : 1;
-    } catch {
-      return 1;
-    }
+  private normalizeZoom(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed)
+      ? Math.min(this.maxZoom, Math.max(this.minZoom, parsed))
+      : 1;
   }
 
   private saveZoom() {
-    try {
-      localStorage.setItem(AppZoomManager.STORAGE_KEY, this.zoom.toString());
-    } catch {
-      // Storage can be unavailable in restricted webviews or test environments.
-    }
+    updateAppSettings({ "ui.zoom": this.zoom });
   }
 }
 
@@ -117,7 +153,6 @@ export interface FontSettings {
 
 export class AppFontManager {
   private static instance: AppFontManager;
-  private static readonly STORAGE_KEY = "zedisql_font_settings";
   private static readonly FONT_CHOICES = [
     "Inter",
     "Segoe UI",
@@ -294,21 +329,25 @@ export class AppFontManager {
   }
 
   private loadSettings() {
-    try {
-      const stored = localStorage.getItem(AppFontManager.STORAGE_KEY);
-      if (!stored) return { ...AppFontManager.DEFAULT_SETTINGS };
-      return this.normalizeSettings({ ...AppFontManager.DEFAULT_SETTINGS, ...JSON.parse(stored) });
-    } catch {
-      return { ...AppFontManager.DEFAULT_SETTINGS };
-    }
+    return this.normalizeSettings({
+      uiFamily: appSettings["ui.font.family"],
+      uiSize: appSettings["ui.font.size"],
+      editorFamily: appSettings["editor.font.family"],
+      editorSize: appSettings["editor.font.size"],
+      dataFamily: appSettings["data.font.family"],
+      dataSize: appSettings["data.font.size"],
+    });
   }
 
   private saveSettings() {
-    try {
-      localStorage.setItem(AppFontManager.STORAGE_KEY, JSON.stringify(this.settings));
-    } catch {
-      // Storage can be unavailable in restricted webviews or test environments.
-    }
+    updateAppSettings({
+      "ui.font.family": this.settings.uiFamily,
+      "ui.font.size": this.settings.uiSize,
+      "editor.font.family": this.settings.editorFamily,
+      "editor.font.size": this.settings.editorSize,
+      "data.font.family": this.settings.dataFamily,
+      "data.font.size": this.settings.dataSize,
+    });
   }
 
   private normalizeSettings(settings: FontSettings) {
@@ -454,7 +493,7 @@ class AppState {
   private listeners: Set<(connected: boolean, host: string | null) => void> = new Set();
   private lastTotalXacts: number = 0;
   private pollInterval: any = null;
-  private activeDatabase: string | null = "postgres";
+  private activeDatabase: string | null = null;
 
   private constructor() { }
 
@@ -1571,7 +1610,8 @@ class TreeView {
 }
 
 // --- App Initialization ---
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+  await loadAppSettings();
   AppFontManager.getInstance().init();
   AppZoomManager.getInstance().init();
 
@@ -1612,6 +1652,11 @@ window.addEventListener("DOMContentLoaded", () => {
   const closeIcon = document.querySelector("#close-modal-icon");
   const closeBtn = document.querySelector("#close-modal");
 
+  (document.querySelector("#db-host") as HTMLInputElement).value = appSettings["connection.host"];
+  (document.querySelector("#db-port") as HTMLInputElement).value = appSettings["connection.port"].toString();
+  (document.querySelector("#db-user") as HTMLInputElement).value = appSettings["connection.username"];
+  (document.querySelector("#db-name") as HTMLInputElement).value = appSettings["connection.database"];
+
   // Listen for the menu event from Rust
   listen("menu-connect", () => {
     if (modal) {
@@ -1646,6 +1691,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const port = parseInt((document.querySelector("#db-port") as HTMLInputElement).value);
     const user = (document.querySelector("#db-user") as HTMLInputElement).value;
     const pass = (document.querySelector("#db-pass") as HTMLInputElement).value;
+    const database = (document.querySelector("#db-name") as HTMLInputElement).value.trim();
     const errorDiv = document.querySelector("#connection-error") as HTMLElement;
     const submitBtn = connectionForm.querySelector("button[type='submit']") as HTMLButtonElement;
 
@@ -1659,12 +1705,18 @@ window.addEventListener("DOMContentLoaded", () => {
     submitBtn.textContent = "Connecting...";
 
     try {
-      await invoke("connect_db", { config: { host, port, user, pass }, database: null });
+      await invoke("connect_db", { config: { host, port, user, pass }, database });
+      updateAppSettings({
+        "connection.host": host,
+        "connection.port": port,
+        "connection.username": user,
+        "connection.database": database,
+      });
       const catalogs = await invoke("get_catalogs") as string[];
 
       // Global Success State
       AppState.getInstance().setConnection(true, host);
-      AppState.getInstance().setActiveDatabase("postgres"); // Explicit Initial Sync
+      AppState.getInstance().setActiveDatabase(database);
 
       if (statusText) statusText.textContent = "Connected successfully.";
       treeView.renderServers(catalogs);
